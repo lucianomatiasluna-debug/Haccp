@@ -310,6 +310,8 @@ else:
     filtered_df = df_db.copy() if not df_db.empty else pd.DataFrame()
     date_range = []
 
+date_span_str = f"{date_range[0]} al {date_range[1]}" if len(date_range) == 2 else "Histórico Completo"
+
 # ---------------------------------------------------------
 # CÁLCULOS GENERALES DE OEE Y PLACAS
 # ---------------------------------------------------------
