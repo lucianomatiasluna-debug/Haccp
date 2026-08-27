@@ -112,8 +112,86 @@ st.markdown("""
         color: #475569;
         margin: 25px 0;
     }
+
+    .login-box {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 16px;
+        padding: 32px;
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);
+        margin-top: 40px;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# SISTEMA DE AUTENTICACIÓN Y CONTROL DE ACCESO (3 USUARIOS)
+# ---------------------------------------------------------
+DEFAULT_USERS = {
+    "lucianomatiasluna@gmail.com": "Rational2026!",
+    "bjaillita@foodservice.com.ar": "Rational2026!",
+    "lrivero@foodservice.com.ar": "Rational2026!"
+}
+
+def get_authorized_users():
+    # Si se definen contraseñas personalizadas en los Secrets de Streamlit Cloud
+    if hasattr(st, "secrets") and "passwords" in st.secrets:
+        return dict(st.secrets["passwords"])
+    return DEFAULT_USERS
+
+def check_login():
+    if st.session_state.get("authenticated", False):
+        return True
+
+    users_db = get_authorized_users()
+
+    col_a, col_b, col_c = st.columns([1, 1.3, 1])
+    with col_b:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class="login-box">
+            <div style="text-align: center; margin-bottom: 24px;">
+                <div style="font-size: 2.2rem; margin-bottom: 6px;">⚡</div>
+                <h2 style="color: #0B2545; font-size: 1.5rem; font-weight: 700; margin: 0;">Rational OEE Analytics</h2>
+                <p style="color: #64748B; font-size: 0.88rem; margin-top: 4px;">Acceso Confidencial • Ingrese sus credenciales</p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        with st.form("login_form"):
+            email_input = st.text_input("Correo Electrónico:", placeholder="usuario@foodservice.com.ar")
+            pass_input = st.text_input("Contraseña:", type="password", placeholder="••••••••")
+            submit_btn = st.form_submit_button("🔓 Iniciar Sesión", use_container_width=True)
+
+            if submit_btn:
+                clean_email = email_input.strip().lower()
+                clean_pass = pass_input.strip()
+
+                matched = False
+                for u_mail, u_pass in users_db.items():
+                    if u_mail.strip().lower() == clean_email and str(u_pass).strip() == clean_pass:
+                        matched = True
+                        break
+
+                if matched:
+                    st.session_state["authenticated"] = True
+                    st.session_state["user_email"] = clean_email
+                    st.success("¡Acceso autorizado! Cargando tablero...")
+                    st.rerun()
+                else:
+                    st.error("Credenciales incorrectas o usuario no autorizado.")
+
+        st.markdown("""
+            <div style="text-align: center; color: #94A3B8; font-size: 0.78rem; margin-top: 14px;">
+                Food Service America • Control HACCP y Eficiencia Operativa
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    return False
+
+# Verificar login obligatorio antes de renderizar la aplicación
+if not check_login():
+    st.stop()
 
 # ---------------------------------------------------------
 # INICIALIZACIÓN DE BASE DE DATOS SQLITE
@@ -128,13 +206,19 @@ if not os.path.exists(default_logs_dir):
     except Exception:
         pass
 
-# Leer base de datos SQLite
 init_db(default_db_file)
 df_db = get_all_charges_from_db(default_db_file)
 
 # ---------------------------------------------------------
-# BARRA LATERAL (SIDEBAR): INGESTA Y PARÁMETROS OEE
+# BARRA LATERAL (SIDEBAR): USUARIO, INGESTA Y PARÁMETROS OEE
 # ---------------------------------------------------------
+st.sidebar.markdown(f"**👤 Sesión:** `{st.session_state.get('user_email', '')}`")
+if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
+    st.session_state["authenticated"] = False
+    st.session_state["user_email"] = ""
+    st.rerun()
+
+st.sidebar.markdown("---")
 st.sidebar.markdown("### ⚙️ Ingesta de Datos")
 
 uploaded_files = st.sidebar.file_uploader(
@@ -342,7 +426,6 @@ with tab_main:
         </div>
         """, unsafe_allow_html=True)
     else:
-        # Fila 1: Indicadores Gauge (Tacómetros)
         st.markdown("#### 🎯 Indicadores Clave de Eficiencia")
         
         col_g1, col_g2, col_g3, col_g4 = st.columns(4)
@@ -389,13 +472,11 @@ with tab_main:
 
         st.markdown("---")
 
-        # Fila 2: Cascada de Pérdidas OEE y Evolución Temporal
         col_w, col_t = st.columns([1, 1])
 
         with col_w:
             st.markdown("#### 📉 Cascada de Pérdidas de Capacidad (Waterfall)")
             
-            # Horas teóricas y pérdidas
             downtime_hours = max(0.0, total_calendar_hours - total_operating_hours)
             perf_loss_hours = max(0.0, total_operating_hours * (1.0 - performance))
             qual_loss_hours = max(0.0, total_operating_hours * performance * (1.0 - quality))
@@ -446,7 +527,6 @@ with tab_main:
         with col_t:
             st.markdown("#### 📈 Evolución Diaria de Eficiencia")
             
-            # Agrupar OEE por día
             daily_stats = filtered_df.groupby('Fecha').agg(
                 Horas=('Duracion_Horas', 'sum'),
                 Cargas=('Carga_Nr', 'count'),
@@ -489,7 +569,6 @@ with tab_main:
 
         st.markdown("---")
 
-        # Fila 3: Perfil Horario de Uso (24 Horas)
         st.markdown("#### ⏰ Distribución del Uso por Franja Horaria (00:00 a 23:00)")
         
         df_hourly = filtered_df[filtered_df['Hora_Del_Dia'].notnull()].copy()
@@ -549,7 +628,6 @@ with tab_fleet:
     st.markdown("### 🎛️ Comparativa de Rendimiento y Eficiencia por Horno")
     
     if not filtered_df.empty:
-        # Calcular OEE individual por número de serie
         fleet_rows = []
         for sn, grp in filtered_df.groupby('Serie_SN'):
             model = grp['Modelo_Dev'].iloc[0]
@@ -559,15 +637,11 @@ with tab_fleet:
             sn_cleaning = (grp['Categoria'] == 'Limpieza (iCareSystem)').sum()
             sn_doors = grp['Aperturas_Puerta'].sum()
             
-            # Disponibilidad
             sn_avail = min(1.0, sn_hours / (days_span * 24.0))
-            # Calidad
             sn_qual = (sn_success / sn_total_charges) if sn_total_charges > 0 else 1.0
-            # Rendimiento
             sn_cadence = (sn_total_charges / sn_hours) if sn_hours > 0 else 0
             sn_door_loss = min(0.35, (sn_doors / sn_total_charges if sn_total_charges > 0 else 0) * door_loss_factor)
             sn_perf = min(1.0, max(0.0, (sn_cadence / theoretical_cadence if theoretical_cadence > 0 else 1.0) * (1.0 - sn_door_loss)))
-            # OEE
             sn_oee = sn_avail * sn_perf * sn_qual
             
             fleet_rows.append({
