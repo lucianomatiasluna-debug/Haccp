@@ -18,40 +18,57 @@ from haccp_database import (
 )
 
 # ---------------------------------------------------------
-# CONFIGURACIÓN DE PÁGINA STREAMLIT
+# CONFIGURACIÓN DE PÁGINA STREAMLIT & PWA TABLET READY
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Rational OEE Analytics | Eficiencia General de Hornos",
+    page_title="Rational OEE & Terminal de Cocina",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------------------------------------
-# ESTILOS CSS PERSONALIZADOS (Blanco, Azul Marino y Verde Esmeralda)
-# ---------------------------------------------------------
+# Inyección PWA y soporte para pantalla completa en Tablets (iPad / Android / Windows)
 st.markdown("""
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Rational OEE">
+    <meta name="theme-color" content="#0B2545">
+    <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Rational%20OEE%20Analytics%22%2C%22short_name%22%3A%22Rational%20OEE%22%2C%22start_url%22%3A%22%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23FFFFFF%22%2C%22theme_color%22%3A%22%230B2545%22%7D">
+</head>
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
         color: #0B2545;
+        touch-action: manipulation;
     }
     
     .main-title {
         font-size: 2.1rem;
-        font-weight: 700;
+        font-weight: 800;
         color: #0B2545;
         letter-spacing: -0.5px;
-        margin-bottom: 0px;
+        margin-bottom: 2px;
     }
     
     .sub-title {
         font-size: 0.95rem;
         color: #475569;
-        margin-bottom: 18px;
+        margin-bottom: 16px;
         font-weight: 400;
+    }
+
+    .touch-box {
+        background: #FFFFFF;
+        border: 2px solid #E2E8F0;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
     }
 
     .kpi-card {
@@ -61,18 +78,12 @@ st.markdown("""
         padding: 16px 20px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         text-align: center;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .kpi-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.08);
     }
     .kpi-label {
         font-size: 0.8rem;
         font-weight: 600;
         text-transform: uppercase;
         color: #64748B;
-        letter-spacing: 0.5px;
         margin-bottom: 6px;
     }
     .kpi-value {
@@ -105,14 +116,23 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
     }
-    
-    .form-box {
-        background: #FFFFFF;
-        border: 1px solid #CBD5E1;
+
+    .touch-indicator {
+        background: #F0FDF4;
+        border: 2px solid #86EFAC;
         border-radius: 12px;
-        padding: 24px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.03);
-        margin-bottom: 24px;
+        padding: 14px;
+        text-align: center;
+        margin-top: 8px;
+    }
+    
+    .touch-warning {
+        background: #FEF2F2;
+        border: 2px solid #FECACA;
+        border-radius: 12px;
+        padding: 14px;
+        text-align: center;
+        margin-top: 8px;
     }
 
     .login-box {
@@ -122,6 +142,18 @@ st.markdown("""
         padding: 32px;
         box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);
         margin-top: 40px;
+    }
+
+    /* Optimización de controles para pantallas táctiles */
+    .stSlider > div {
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+    .stButton > button {
+        min-height: 48px;
+        font-size: 1.05rem;
+        font-weight: 600;
+        border-radius: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -225,6 +257,61 @@ user_role = st.session_state.get("user_role", "Supervisor")
 user_name = st.session_state.get("user_name", "")
 user_email = st.session_state.get("user_email", "")
 
+# ---------------------------------------------------------
+# CATÁLOGO DE RECETAS EN CASCADA (100% SELECCIONABLE EN TABLET)
+# ---------------------------------------------------------
+CATALOGO_RECETAS = {
+    "🥩 Proteínas y Carnes": [
+        "Pollo Asado / Cuartos de Pollo",
+        "Supremas / Pechugas de Pollo",
+        "Carne Vacuna Asada (Peceto / Lomo / Tapa)",
+        "Carne Vacuna Braseada / Estofada",
+        "Bondiola / Costillar de Cerdo",
+        "Hamburguesas / Albóndigas de Carne",
+        "Filet de Pescado / Merluza al Horno",
+        "Milanesas al Horno (Vacuna / Pollo)"
+    ],
+    "🥔 Guarniciones y Vegetales": [
+        "Papas Rústicas / Cuña al Horno",
+        "Vegetales Asados Mixtos (Zanahoria, Morrón, Cebolla)",
+        "Calabaza / Zapallo Asado al Horno",
+        "Zanahorias Glaseadas al Vapor",
+        "Batatas Asadas / Horneadas",
+        "Brócoli / Coliflor al Vapor",
+        "Puré Mixto / Puré de Papas"
+    ],
+    "🍝 Pastas, Arroces y Masas": [
+        "Lasaña de Carne / Verdura",
+        "Canelones Gratinados al Horno",
+        "Pastel de Papas al Horno",
+        "Arroz Blanco / Arroz Pilaf",
+        "Arroz Primavera / Risotto",
+        "Polenta Horneada con Queso",
+        "Tartas / Empanadas Horneadas"
+    ],
+    "🥣 Salsas, Guisos y Marmitas": [
+        "Salsa Fileto / Pomodoro",
+        "Salsa Bolognesa con Carne",
+        "Salsa Blanca / Bechamel",
+        "Guiso de Lentejas / Porotos",
+        "Estofado de Carne con Verduras",
+        "Caldo de Ave / Caldo de Verduras",
+        "Salsa de Cuatro Quesos"
+    ],
+    "🥖 Panadería y Horneados": [
+        "Pan de Mesa / Flautitas",
+        "Medialunas / Croissants",
+        "Budines / Muffins",
+        "Pizzas / Focaccias",
+        "Bizcochuelo / Postres al Horno"
+    ],
+    "♨️ Regeneración y Mantención": [
+        "Regeneración Platos Servidos GN 1/1",
+        "Regeneración Bandejas Proteína",
+        "Mantenimiento Térmico HACCP"
+    ]
+}
+
 # Motivos de rechazo estándar
 MOTIVOS_RECHAZO_LIST = [
     "100% Conforme (Sin Desvío)",
@@ -253,90 +340,93 @@ if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
 st.sidebar.markdown("---")
 
 # =========================================================
-# 👨‍🍳 VISTA OPERARIO: 2 PROCESOS INDEPENDIENTES (DATA ENTRY)
+# 👨‍🍳 VISTA OPERARIO: TABLET TOUCH 100% (CERO TECLADO)
 # =========================================================
 if user_role == "Operario":
-    st.markdown('<div class="main-title">📝 Terminal de Registro de Cocina</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="sub-title">Operario: <b>{user_name}</b> | Procesos independientes: <b>1. Carga de Placas/Kilos</b> y <b>2. Control de Unidades/Calidad</b></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">📱 Terminal Táctil de Cocina</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sub-title">Cocinero: <b>{user_name}</b> | Modo Tablet: 100% Seleccionable y Sliders (Sin Teclado)</div>', unsafe_allow_html=True)
 
     equipos_dict = {
         r['id']: f"{r['nombre']} ({r['tipo']})"
         for _, r in df_catalogo.iterrows()
     }
 
-    # 2 PESTAÑAS INDEPENDIENTES PARA LOS 2 PROCESOS
+    # 2 PESTAÑAS INDEPENDIENTES PARA TABLET
     tab_p1, tab_p2 = st.tabs([
-        "📥 Proceso 1: Carga Inicial de Placas / Kilos (Al Iniciar)",
-        "📦 Proceso 2: Control de Unidades y Calidad (Al Finalizar)"
+        "📥 Proceso 1: Carga Inicial de Placas / Kg (Al Iniciar)",
+        "📦 Proceso 2: Control de Unidades y Calidad (Al Terminar)"
     ])
 
     # ---------------------------------------------------------
-    # PROCESO 1: CARGA INICIAL
+    # PROCESO 1: CARGA INICIAL (100% SELECTORES & SLIDERS)
     # ---------------------------------------------------------
     with tab_p1:
-        st.markdown("#### 📥 1. Registro de Entrada al Horno o Marmita")
-        st.caption("Registra la cantidad de placas o kilos que se introducen al iniciar la cocción.")
+        st.markdown("#### 📥 1. Entrada al Horno o Marmita")
+        st.caption("Selecciona el equipo y el alimento mediante los desplegables táctiles y ajusta las placas/kilos con el slider.")
 
         with st.container():
-            st.markdown('<div class="form-box">', unsafe_allow_html=True)
+            st.markdown('<div class="touch-box">', unsafe_allow_html=True)
 
-            col_e1, col_p1_in, col_d1 = st.columns([1.5, 2, 1])
-            with col_e1:
-                sel_eq_1 = st.selectbox("Equipo:", options=list(equipos_dict.keys()), format_func=lambda x: equipos_dict[x], key="p1_eq")
-                eq_info_1 = df_catalogo[df_catalogo['id'] == sel_eq_1].iloc[0]
-                es_marmita_1 = (eq_info_1['tipo'] == 'Marmita Industrial')
-                cap_max_1 = float(eq_info_1['capacidad_nominal'])
-                unidad_txt_1 = "Kg" if es_marmita_1 else "Placas"
+            # Selector de Equipo
+            sel_eq_1 = st.selectbox("1. Selecciona el Horno o Marmita:", options=list(equipos_dict.keys()), format_func=lambda x: equipos_dict[x], key="touch_p1_eq")
+            eq_info_1 = df_catalogo[df_catalogo['id'] == sel_eq_1].iloc[0]
+            es_marmita_1 = (eq_info_1['tipo'] == 'Marmita Industrial')
+            cap_max_1 = float(eq_info_1['capacidad_nominal'])
+            unidad_txt_1 = "Kg" if es_marmita_1 else "Placas"
 
-            with col_p1_in:
-                prod_1 = st.text_input("Producto / Receta que Entra a Cocción:", placeholder="Ej: Pollo Asado, Arroz, Salsa Fileto, Cerdo", key="p1_prod")
-            with col_d1:
-                dur_1 = st.number_input("Duración Estimada (min):", min_value=5, max_value=480, value=45, step=5, key="p1_dur")
+            col_cat, col_prod = st.columns(2)
+            with col_cat:
+                cat_elegida_1 = st.selectbox("2. Categoría de Alimento:", list(CATALOGO_RECETAS.keys()), key="touch_cat_1")
+            with col_prod:
+                recetas_disponibles = CATALOGO_RECETAS.get(cat_elegida_1, [])
+                prod_elegido_1 = st.selectbox("3. Producto / Receta a Cocinar:", recetas_disponibles, key="touch_prod_1")
 
             st.markdown("---")
 
-            col_c1_a, col_c1_b = st.columns([2, 1])
-            with col_c1_a:
+            col_sl1, col_sl2 = st.columns(2)
+            with col_sl1:
+                dur_1 = st.slider("4. Duración Estimada de Cocción (Minutos):", min_value=10, max_value=180, value=45, step=5, key="touch_dur_1")
+            
+            with col_sl2:
                 if not es_marmita_1:
-                    placas_cargadas_in = st.number_input(f"Cantidad de Placas Depositadas en el Horno (Máx: {cap_max_1:.0f}):", min_value=1, max_value=int(cap_max_1), value=min(20, int(cap_max_1)), step=1, key="p1_placas")
+                    placas_cargadas_in = st.slider(f"5. Placas Introducidas en el Horno (Máx: {cap_max_1:.0f} Placas):", min_value=1, max_value=int(cap_max_1), value=min(20, int(cap_max_1)), step=1, key="touch_placas_1")
                     kg_cargados_in = 0.0
+                    pct_ocup = round(placas_cargadas_in / cap_max_1 * 100, 1)
+                    st.info(f"🍞 **Carga:** {placas_cargadas_in} de {cap_max_1:.0f} guías ({pct_ocup}% de capacidad ocupada)")
                 else:
-                    kg_cargados_in = st.number_input(f"Kilos Introducidos en la Marmita (Máx: {cap_max_1:.0f} Kg):", min_value=1.0, max_value=cap_max_1, value=min(150.0, cap_max_1), step=5.0, key="p1_kg")
+                    kg_cargados_in = st.slider(f"5. Kilos Cargados en la Marmita (Máx: {cap_max_1:.0f} Kg):", min_value=10.0, max_value=cap_max_1, value=min(150.0, cap_max_1), step=5.0, key="touch_kg_1")
                     placas_cargadas_in = 0
-            with col_c1_b:
-                pct_ocup = round((placas_cargadas_in/cap_max_1*100) if not es_marmita_1 else (kg_cargados_in/cap_max_1*100), 1)
-                st.metric("Ocupación de Capacidad:", f"{pct_ocup}%", delta=f"{placas_cargadas_in if not es_marmita_1 else kg_cargados_in} de {cap_max_1:.0f} {unidad_txt_1}")
+                    pct_ocup = round(kg_cargados_in / cap_max_1 * 100, 1)
+                    st.info(f"🥣 **Carga:** {kg_cargados_in:.1f} Kg de {cap_max_1:.0f} Kg ({pct_ocup}% de capacidad ocupada)")
 
+            st.markdown("<br>", unsafe_allow_html=True)
             hoy_str = datetime.date.today().strftime("%Y-%m-%d")
             hora_act_str = datetime.datetime.now().strftime("%H:%M:%S")
 
-            if st.button("💾 Iniciar Cocción y Guardar Carga de Placas/Kg", type="primary", use_container_width=True, key="btn_p1"):
-                if not prod_1.strip():
-                    st.error("Por favor, ingresa el nombre del Producto / Receta.")
-                else:
-                    new_id = insert_carga_inicial(
-                        equipo_alias=eq_info_1['nombre'],
-                        tipo_equipo=eq_info_1['tipo'],
-                        fecha=hoy_str,
-                        hora=hora_act_str,
-                        producto=prod_1.strip(),
-                        duracion_min=dur_1,
-                        placas_usadas=placas_cargadas_in,
-                        kilos_cargados=kg_cargados_in,
-                        operador=user_name,
-                        db_path=default_db_file
-                    )
-                    st.success(f"✅ ¡Cocción #{new_id} de '{prod_1}' iniciada en {eq_info_1['nombre']}!")
-                    st.rerun()
+            if st.button("🚀 INICIAR COCCIÓN Y GUARDAR ENTRADA", type="primary", use_container_width=True, key="touch_btn_p1"):
+                new_id = insert_carga_inicial(
+                    equipo_alias=eq_info_1['nombre'],
+                    tipo_equipo=eq_info_1['tipo'],
+                    fecha=hoy_str,
+                    hora=hora_act_str,
+                    producto=prod_elegido_1,
+                    duracion_min=dur_1,
+                    placas_usadas=placas_cargadas_in,
+                    kilos_cargados=kg_cargados_in,
+                    operador=user_name,
+                    db_path=default_db_file
+                )
+                st.success(f"✅ ¡Cocción #{new_id} de '{prod_elegido_1}' iniciada en {eq_info_1['nombre']}!")
+                st.rerun()
 
             st.markdown('</div>', unsafe_allow_html=True)
 
     # ---------------------------------------------------------
-    # PROCESO 2: CONTROL DE UNIDADES Y CALIDAD
+    # PROCESO 2: CONTROL DE CALIDAD (100% SELECTORES & SLIDERS)
     # ---------------------------------------------------------
     with tab_p2:
-        st.markdown("#### 📦 2. Registro de Unidades Conformes y Control de Calidad")
-        st.caption("Selecciona la cocción que finalizó para ingresar las unidades obtenidas y verificar si hubo desvíos.")
+        st.markdown("#### 📦 2. Salida y Control de Calidad")
+        st.caption("Selecciona la cocción terminada y ajusta con los sliders las unidades/kilos totales y los que salieron con falla (merma).")
 
         df_todas_cal = get_all_charges_from_db(default_db_file)
         hoy_str = datetime.date.today().strftime("%Y-%m-%d")
@@ -345,59 +435,96 @@ if user_role == "Operario":
         if not df_hoy_cal.empty:
             cargas_abiertas = df_hoy_cal.to_dict('records')
             opciones_cal = {
-                c['id']: f"ID #{c['id']} | {c['Hora']} | {c['Equipo_Alias'] or c['Modelo_Dev']} | {c['Programa']} ({c['Placas_Utilizadas']} Placas / {c['Kilos_Totales']} Kg) - [{c['Estado_Final']}]"
+                c['id']: f"ID #{c['id']} | {c['Hora']} | {c['Equipo_Alias'] or c['Modelo_Dev']} | {c['Programa']} ({c['Placas_Utilizadas']} Placas / {c['Kilos_Totales']} Kg)"
                 for c in cargas_abiertas
             }
 
-            sel_c_id_cal = st.selectbox("Selecciona la Cocción Terminada:", options=list(opciones_cal.keys()), format_func=lambda x: opciones_cal[x], key="p2_sel_c")
+            sel_c_id_cal = st.selectbox("1. Selecciona la Cocción Terminada:", options=list(opciones_cal.keys()), format_func=lambda x: opciones_cal[x], key="touch_p2_sel_c")
             c_item_cal = df_hoy_cal[df_hoy_cal['id'] == sel_c_id_cal].iloc[0]
             es_marm_cal = ("Marmita" in str(c_item_cal['Modelo_Dev']) or "Marmita" in str(c_item_cal['Equipo_Alias']))
 
             with st.container():
-                st.markdown('<div class="form-box">', unsafe_allow_html=True)
+                st.markdown('<div class="touch-box">', unsafe_allow_html=True)
 
-                st.markdown(f"**Cocción Seleccionada:** `{c_item_cal['Programa']}` en `{c_item_cal['Equipo_Alias'] or c_item_cal['Modelo_Dev']}` ({c_item_cal['Hora']} hs)")
-
-                col_q1, col_q2, col_q3 = st.columns(3)
+                st.markdown(f"📍 **Lote Activo:** `{c_item_cal['Programa']}` en `{c_item_cal['Equipo_Alias'] or c_item_cal['Modelo_Dev']}` ({c_item_cal['Hora']} hs)")
 
                 if not es_marm_cal:
+                    # Hornos: Sliders de Unidades
                     def_u_tot = int(c_item_cal['Unidades_Totales'] if c_item_cal['Unidades_Totales'] > 0 else (c_item_cal['Placas_Utilizadas'] * 10))
-                    def_u_ok = int(c_item_cal['Unidades_OK'] if c_item_cal['Unidades_OK'] > 0 else def_u_tot)
+                    def_u_nok = int(c_item_cal['Unidades_Rechazadas'] if c_item_cal['Unidades_Rechazadas'] > 0 else 0)
 
-                    with col_q1:
-                        u_tot_in = st.number_input("Unidades Totales Obtenidas:", min_value=1, value=def_u_tot, step=5, key="p2_u_tot")
-                    with col_q2:
-                        u_ok_in = st.number_input("Unidades BIEN (Conformes OK):", min_value=0, max_value=u_tot_in, value=min(def_u_ok, u_tot_in), step=5, key="p2_u_ok")
-                    with col_q3:
-                        u_nok_in = u_tot_in - u_ok_in
-                        st.metric("Unidades MAL (Merma / Scrap):", f"{u_nok_in} un.", delta=f"{round(u_nok_in/u_tot_in*100, 1)}% rechazo" if u_tot_in>0 else "0%", delta_color="inverse")
+                    col_sl_u1, col_sl_u2 = st.columns(2)
+                    with col_sl_u1:
+                        u_tot_in = st.slider("2. Total Unidades Obtenidas de la Cocción:", min_value=10, max_value=500, value=max(10, min(500, def_u_tot)), step=5, key="touch_sl_utot")
+                    with col_sl_u2:
+                        u_nok_in = st.slider("3. Unidades Defectuosas / Rechazadas (Merma):", min_value=0, max_value=min(100, u_tot_in), value=min(def_u_nok, u_tot_in), step=1, key="touch_sl_unok")
+
+                    u_ok_in = u_tot_in - u_nok_in
+                    pct_ok = round(u_ok_in / u_tot_in * 100, 1)
+
+                    col_res1, col_res2 = st.columns(2)
+                    with col_res1:
+                        st.markdown(f"""
+                        <div class="touch-indicator">
+                            <div style="font-size: 0.85rem; font-weight: 700; color: #166534;">✅ UNIDADES BIEN (CONFORMES)</div>
+                            <div style="font-size: 2.2rem; font-weight: 800; color: #15803D;">{u_ok_in} un.</div>
+                            <div style="font-size: 0.85rem; color: #166534;">Tasa de Calidad: <b>{pct_ok}%</b></div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col_res2:
+                        st.markdown(f"""
+                        <div class="touch-warning">
+                            <div style="font-size: 0.85rem; font-weight: 700; color: #991B1B;">⚠️ UNIDADES MAL (MERMA)</div>
+                            <div style="font-size: 2.2rem; font-weight: 800; color: #DC2626;">{u_nok_in} un.</div>
+                            <div style="font-size: 0.85rem; color: #991B1B;">Pérdida: <b>{round(u_nok_in/u_tot_in*100, 1)}%</b></div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
                     kg_ok_in = kg_nok_in = 0.0
                 else:
+                    # Marmitas: Sliders de Kilos
                     def_kg_tot = float(c_item_cal['Kilos_Totales'] if c_item_cal['Kilos_Totales'] > 0 else 150.0)
-                    def_kg_ok = float(c_item_cal['Kilos_OK'] if c_item_cal['Kilos_OK'] > 0 else def_kg_tot)
+                    def_kg_nok = float(c_item_cal['Kilos_Rechazados'] if c_item_cal['Kilos_Rechazados'] > 0 else 0.0)
 
-                    with col_q1:
-                        kg_tot_in = st.number_input("Kilos Totales Obtenidos (Kg):", min_value=1.0, value=def_kg_tot, step=5.0, key="p2_kg_tot")
-                    with col_q2:
-                        kg_ok_in = st.number_input("Kilos BIEN (Conformes OK):", min_value=0.0, max_value=kg_tot_in, value=min(def_kg_ok, kg_tot_in), step=5.0, key="p2_kg_ok")
-                    with col_q3:
-                        kg_nok_in = round(kg_tot_in - kg_ok_in, 1)
-                        st.metric("Kilos de Merma (Kg NOK):", f"{kg_nok_in} Kg", delta=f"{round(kg_nok_in/kg_tot_in*100, 1)}% rechazo" if kg_tot_in>0 else "0%", delta_color="inverse")
+                    col_sl_k1, col_sl_k2 = st.columns(2)
+                    with col_sl_k1:
+                        kg_tot_in = st.slider("2. Kilos Totales Obtenidos (Kg):", min_value=10.0, max_value=250.0, value=max(10.0, min(250.0, def_kg_tot)), step=5.0, key="touch_sl_kgtot")
+                    with col_sl_k2:
+                        kg_nok_in = st.slider("3. Kilos de Merma / Scrap (Kg):", min_value=0.0, max_value=min(50.0, kg_tot_in), value=min(def_kg_nok, kg_tot_in), step=0.5, key="touch_sl_kgnok")
+
+                    kg_ok_in = round(kg_tot_in - kg_nok_in, 1)
+                    pct_ok = round(kg_ok_in / kg_tot_in * 100, 1)
+
+                    col_res1, col_res2 = st.columns(2)
+                    with col_res1:
+                        st.markdown(f"""
+                        <div class="touch-indicator">
+                            <div style="font-size: 0.85rem; font-weight: 700; color: #166534;">✅ KILOS CONFORMES (OK)</div>
+                            <div style="font-size: 2.2rem; font-weight: 800; color: #15803D;">{kg_ok_in:.1f} Kg</div>
+                            <div style="font-size: 0.85rem; color: #166534;">Rendimiento: <b>{pct_ok}%</b></div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with col_res2:
+                        st.markdown(f"""
+                        <div class="touch-warning">
+                            <div style="font-size: 0.85rem; font-weight: 700; color: #991B1B;">⚠️ MERMA / RECHAZO (KG)</div>
+                            <div style="font-size: 2.2rem; font-weight: 800; color: #DC2626;">{kg_nok_in:.1f} Kg</div>
+                            <div style="font-size: 0.85rem; color: #991B1B;">Pérdida: <b>{round(kg_nok_in/kg_tot_in*100, 1)}%</b></div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
                     u_tot_in = u_ok_in = u_nok_in = 0
 
-                # Desplegable de motivos
-                col_m1, col_m2 = st.columns([2, 1])
-                with col_m1:
-                    mot_cur_p2 = str(c_item_cal['Motivo_Rechazo'] or "")
-                    idx_p2 = MOTIVOS_RECHAZO_LIST.index(mot_cur_p2) if mot_cur_p2 in MOTIVOS_RECHAZO_LIST else 0
-                    motivo_sel_p2 = st.selectbox("📋 Motivo del Desvío o Rechazo:", MOTIVOS_RECHAZO_LIST, index=idx_p2, key="p2_mot_sel")
-                with col_m2:
-                    motivo_otro_p2 = ""
-                    if motivo_sel_p2 == "Otro":
-                        motivo_otro_p2 = st.text_input("Especificar motivo:", placeholder="Escribe el detalle...", key="p2_mot_otro")
+                st.markdown("<br>", unsafe_allow_html=True)
 
-                if st.button("💾 Guardar Control de Calidad", type="primary", use_container_width=True, key="btn_p2"):
-                    mot_fin_p2 = motivo_otro_p2 if motivo_sel_p2 == "Otro" else (motivo_sel_p2 if motivo_sel_p2 != "100% Conforme (Sin Desvío)" else "")
+                # Desplegable táctil de motivos
+                mot_cur_p2 = str(c_item_cal['Motivo_Rechazo'] or "")
+                idx_p2 = MOTIVOS_RECHAZO_LIST.index(mot_cur_p2) if mot_cur_p2 in MOTIVOS_RECHAZO_LIST else 0
+                motivo_sel_p2 = st.selectbox("4. Motivo del Desvío o Merma:", MOTIVOS_RECHAZO_LIST, index=idx_p2, key="touch_p2_mot_sel")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                if st.button("💾 GUARDAR CONTROL DE CALIDAD", type="primary", use_container_width=True, key="touch_btn_p2"):
                     registrar_salida_calidad(
                         charge_id=sel_c_id_cal,
                         unidades_tot=u_tot_in,
@@ -405,11 +532,11 @@ if user_role == "Operario":
                         unidades_nok=u_nok_in,
                         kilos_ok=kg_ok_in,
                         kilos_nok=kg_nok_in,
-                        motivo_rechazo=mot_fin_p2,
+                        motivo_rechazo=motivo_sel_p2 if motivo_sel_p2 != "100% Conforme (Sin Desvío)" else "",
                         operador=user_name,
                         db_path=default_db_file
                     )
-                    st.success(f"✅ ¡Calidad de Cocción #{sel_c_id_cal} guardada con éxito!")
+                    st.success(f"✅ ¡Calidad de Cocción #{sel_c_id_cal} registrada con éxito!")
                     st.rerun()
 
                 st.markdown('</div>', unsafe_allow_html=True)
@@ -417,7 +544,7 @@ if user_role == "Operario":
             st.info("No hay cocciones registradas hoy. Realiza la carga en el 'Proceso 1' primero.")
 
     # ---------------------------------------------------------
-    # HISTORIAL DEL DÍA
+    # HISTORIAL DEL DÍA EN TABLET
     # ---------------------------------------------------------
     st.markdown("---")
     st.markdown(f"### 📋 Operaciones Realizadas Hoy ({datetime.date.today().strftime('%d/%m/%Y')})")
