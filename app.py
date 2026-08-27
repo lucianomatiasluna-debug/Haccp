@@ -27,7 +27,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inyección PWA y soporte para pantalla completa en Tablets (iPad / Android / Windows)
+# Inyección PWA, bloqueo activo de teclado virtual y estilos touch para Tablets
 st.markdown("""
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -38,6 +38,36 @@ st.markdown("""
     <meta name="theme-color" content="#0B2545">
     <link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22Rational%20OEE%20Analytics%22%2C%22short_name%22%3A%22Rational%20OEE%22%2C%22start_url%22%3A%22%2F%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23FFFFFF%22%2C%22theme_color%22%3A%22%230B2545%22%7D">
 </head>
+
+<script>
+// Bloqueador activo de teclado virtual en Tablets (Android / iOS / iPadOS)
+function lockVirtualKeyboard() {
+    try {
+        const root = window.parent ? window.parent.document : document;
+        const selects = root.querySelectorAll('div[data-baseweb="select"] input');
+        selects.forEach(input => {
+            input.setAttribute('inputmode', 'none');
+            input.setAttribute('readonly', 'readonly');
+            input.setAttribute('tabindex', '-1');
+        });
+    } catch(e) {}
+}
+setInterval(lockVirtualKeyboard, 400);
+
+if (window.parent) {
+    window.parent.document.addEventListener('touchstart', function(e) {
+        if (e.target && e.target.tagName === 'INPUT') {
+            const selectParent = e.target.closest('div[data-baseweb="select"]');
+            if (selectParent) {
+                e.target.setAttribute('inputmode', 'none');
+                e.target.setAttribute('readonly', 'readonly');
+                e.target.blur();
+            }
+        }
+    }, { passive: true });
+}
+</script>
+
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     
@@ -144,16 +174,55 @@ st.markdown("""
         margin-top: 40px;
     }
 
-    /* Optimización de controles para pantallas táctiles */
+    /* DESACTIVACIÓN TOTAL DE TECLADO VIRTUAL EN SELECTBOX */
+    div[data-baseweb="select"] input {
+        inputmode: none !important;
+        pointer-events: none !important;
+        caret-color: transparent !important;
+    }
+    div[data-baseweb="select"] {
+        cursor: pointer !important;
+        -webkit-touch-callout: none !important;
+        -webkit-user-select: none !important;
+        user-select: none !important;
+    }
+    div[data-baseweb="popover"] {
+        -webkit-touch-callout: none !important;
+        -webkit-user-select: none !important;
+        user-select: none !important;
+    }
+
+    /* BOTONES TÁCTILES GRANDES (PILLS) PARA RADIO HORIZONTAL */
+    div[role="radiogroup"] {
+        gap: 8px !important;
+        flex-wrap: wrap !important;
+    }
+    div[role="radiogroup"] > label {
+        background-color: #F8FAFC !important;
+        border: 2px solid #CBD5E1 !important;
+        border-radius: 12px !important;
+        padding: 10px 16px !important;
+        margin-right: 6px !important;
+        margin-bottom: 6px !important;
+        cursor: pointer !important;
+        font-weight: 600 !important;
+        color: #0B2545 !important;
+        transition: all 0.15s ease !important;
+    }
+    div[role="radiogroup"] > label:hover {
+        background-color: #EFF6FF !important;
+        border-color: #3B82F6 !important;
+    }
+
     .stSlider > div {
         padding-top: 8px;
         padding-bottom: 8px;
     }
     .stButton > button {
-        min-height: 48px;
-        font-size: 1.05rem;
-        font-weight: 600;
-        border-radius: 10px;
+        min-height: 52px;
+        font-size: 1.1rem;
+        font-weight: 700;
+        border-radius: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -340,11 +409,11 @@ if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
 st.sidebar.markdown("---")
 
 # =========================================================
-# 👨‍🍳 VISTA OPERARIO: TABLET TOUCH 100% (CERO TECLADO)
+# 👨‍🍳 VISTA OPERARIO: TABLET TOUCH (CERO TECLADO EN PANTALLA)
 # =========================================================
 if user_role == "Operario":
     st.markdown('<div class="main-title">📱 Terminal Táctil de Cocina</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="sub-title">Cocinero: <b>{user_name}</b> | Modo Tablet: 100% Seleccionable y Sliders (Sin Teclado)</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sub-title">Cocinero: <b>{user_name}</b> | Modo Tablet Táctil (Botones Rápidos y Sliders)</div>', unsafe_allow_html=True)
 
     equipos_dict = {
         r['id']: f"{r['nombre']} ({r['tipo']})"
@@ -358,31 +427,55 @@ if user_role == "Operario":
     ])
 
     # ---------------------------------------------------------
-    # PROCESO 1: CARGA INICIAL (100% SELECTORES & SLIDERS)
+    # PROCESO 1: CARGA INICIAL (BOTONES TÁCTILES & SLIDERS)
     # ---------------------------------------------------------
     with tab_p1:
         st.markdown("#### 📥 1. Entrada al Horno o Marmita")
-        st.caption("Selecciona el equipo y el alimento mediante los desplegables táctiles y ajusta las placas/kilos con el slider.")
+        st.caption("Selecciona el equipo y el alimento tocando los botones táctiles y ajusta las placas/kilos con el slider.")
 
         with st.container():
             st.markdown('<div class="touch-box">', unsafe_allow_html=True)
 
-            # Selector de Equipo
-            sel_eq_1 = st.selectbox("1. Selecciona el Horno o Marmita:", options=list(equipos_dict.keys()), format_func=lambda x: equipos_dict[x], key="touch_p1_eq")
+            # 1. Selector de Equipo con Botones Táctiles Horizontales (CERO Teclado)
+            st.markdown("##### 1. Selecciona el Horno o Marmita:")
+            sel_eq_1 = st.radio(
+                "Equipo:",
+                options=list(equipos_dict.keys()),
+                format_func=lambda x: equipos_dict[x],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="touch_p1_eq"
+            )
             eq_info_1 = df_catalogo[df_catalogo['id'] == sel_eq_1].iloc[0]
             es_marmita_1 = (eq_info_1['tipo'] == 'Marmita Industrial')
             cap_max_1 = float(eq_info_1['capacidad_nominal'])
             unidad_txt_1 = "Kg" if es_marmita_1 else "Placas"
 
-            col_cat, col_prod = st.columns(2)
-            with col_cat:
-                cat_elegida_1 = st.selectbox("2. Categoría de Alimento:", list(CATALOGO_RECETAS.keys()), key="touch_cat_1")
-            with col_prod:
-                recetas_disponibles = CATALOGO_RECETAS.get(cat_elegida_1, [])
-                prod_elegido_1 = st.selectbox("3. Producto / Receta a Cocinar:", recetas_disponibles, key="touch_prod_1")
+            st.markdown("---")
+
+            # 2. Categoría de Alimento con Botones Táctiles Horizontales
+            st.markdown("##### 2. Categoría de Alimento:")
+            cat_elegida_1 = st.radio(
+                "Categoría:",
+                options=list(CATALOGO_RECETAS.keys()),
+                horizontal=True,
+                label_visibility="collapsed",
+                key="touch_cat_1"
+            )
+
+            # 3. Producto / Receta en Cascada
+            st.markdown("##### 3. Producto / Receta a Elaborar:")
+            recetas_disponibles = CATALOGO_RECETAS.get(cat_elegida_1, [])
+            prod_elegido_1 = st.selectbox(
+                "Receta:",
+                recetas_disponibles,
+                label_visibility="collapsed",
+                key="touch_prod_1"
+            )
 
             st.markdown("---")
 
+            # 4. Sliders de Duración y Carga
             col_sl1, col_sl2 = st.columns(2)
             with col_sl1:
                 dur_1 = st.slider("4. Duración Estimada de Cocción (Minutos):", min_value=10, max_value=180, value=45, step=5, key="touch_dur_1")
@@ -422,11 +515,11 @@ if user_role == "Operario":
             st.markdown('</div>', unsafe_allow_html=True)
 
     # ---------------------------------------------------------
-    # PROCESO 2: CONTROL DE CALIDAD (100% SELECTORES & SLIDERS)
+    # PROCESO 2: CONTROL DE CALIDAD (BOTONES TÁCTILES & SLIDERS)
     # ---------------------------------------------------------
     with tab_p2:
         st.markdown("#### 📦 2. Salida y Control de Calidad")
-        st.caption("Selecciona la cocción terminada y ajusta con los sliders las unidades/kilos totales y los que salieron con falla (merma).")
+        st.caption("Selecciona la cocción terminada y ajusta con los sliders las unidades/kilos totales y las unidades defectuosas (merma).")
 
         df_todas_cal = get_all_charges_from_db(default_db_file)
         hoy_str = datetime.date.today().strftime("%Y-%m-%d")
@@ -439,7 +532,8 @@ if user_role == "Operario":
                 for c in cargas_abiertas
             }
 
-            sel_c_id_cal = st.selectbox("1. Selecciona la Cocción Terminada:", options=list(opciones_cal.keys()), format_func=lambda x: opciones_cal[x], key="touch_p2_sel_c")
+            st.markdown("##### 1. Selecciona la Cocción Terminada:")
+            sel_c_id_cal = st.selectbox("Cocción:", options=list(opciones_cal.keys()), format_func=lambda x: opciones_cal[x], label_visibility="collapsed", key="touch_p2_sel_c")
             c_item_cal = df_hoy_cal[df_hoy_cal['id'] == sel_c_id_cal].iloc[0]
             es_marm_cal = ("Marmita" in str(c_item_cal['Modelo_Dev']) or "Marmita" in str(c_item_cal['Equipo_Alias']))
 
@@ -518,9 +612,10 @@ if user_role == "Operario":
                 st.markdown("<br>", unsafe_allow_html=True)
 
                 # Desplegable táctil de motivos
+                st.markdown("##### 4. Motivo del Desvío o Merma:")
                 mot_cur_p2 = str(c_item_cal['Motivo_Rechazo'] or "")
                 idx_p2 = MOTIVOS_RECHAZO_LIST.index(mot_cur_p2) if mot_cur_p2 in MOTIVOS_RECHAZO_LIST else 0
-                motivo_sel_p2 = st.selectbox("4. Motivo del Desvío o Merma:", MOTIVOS_RECHAZO_LIST, index=idx_p2, key="touch_p2_mot_sel")
+                motivo_sel_p2 = st.selectbox("Motivo:", MOTIVOS_RECHAZO_LIST, index=idx_p2, label_visibility="collapsed", key="touch_p2_mot_sel")
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
