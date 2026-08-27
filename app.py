@@ -11,7 +11,7 @@ from haccp_parser import load_multiple_haccp_files
 from haccp_database import (
     init_db, save_df_to_db, scan_and_sync_folder,
     get_all_charges_from_db, clear_database,
-    get_equipos_catalogo, insert_operacion_manual, delete_operacion,
+    get_equipos_catalogo, insert_carga_inicial, registrar_salida_calidad, delete_operacion,
     update_charge_production_records,
     get_base_app_dir, get_default_db_path,
     RATIONAL_MANUAL_CAPACITIES, get_rational_capacity
@@ -253,108 +253,173 @@ if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
 st.sidebar.markdown("---")
 
 # =========================================================
-# 👨‍🍳 VISTA OPERARIO (DATA ENTRY PURO Y LISTA DEL DÍA)
+# 👨‍🍳 VISTA OPERARIO: 2 PROCESOS INDEPENDIENTES (DATA ENTRY)
 # =========================================================
 if user_role == "Operario":
     st.markdown('<div class="main-title">📝 Terminal de Registro de Cocina</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="sub-title">Operario: <b>{user_name}</b> | Ingreso rápido de operaciones de cocción en Hornos y Marmitas</div>', unsafe_allow_html=True)
-
-    # 1. FORMULARIO DE DATA ENTRY
-    st.markdown("### ➕ Registrar Nueva Operación")
+    st.markdown(f'<div class="sub-title">Operario: <b>{user_name}</b> | Procesos independientes: <b>1. Carga de Placas/Kilos</b> y <b>2. Control de Unidades/Calidad</b></div>', unsafe_allow_html=True)
 
     equipos_dict = {
         r['id']: f"{r['nombre']} ({r['tipo']})"
         for _, r in df_catalogo.iterrows()
     }
 
-    with st.container():
-        st.markdown('<div class="form-box">', unsafe_allow_html=True)
+    # 2 PESTAÑAS INDEPENDIENTES PARA LOS 2 PROCESOS
+    tab_p1, tab_p2 = st.tabs([
+        "📥 Proceso 1: Carga Inicial de Placas / Kilos (Al Iniciar)",
+        "📦 Proceso 2: Control de Unidades y Calidad (Al Finalizar)"
+    ])
 
-        col_eq, col_prod, col_dur = st.columns([1.5, 2, 1])
-        with col_eq:
-            sel_equipo_id = st.selectbox("1. Equipo Utilizado:", options=list(equipos_dict.keys()), format_func=lambda x: equipos_dict[x], key="op_eq_sel")
-            eq_info = df_catalogo[df_catalogo['id'] == sel_equipo_id].iloc[0]
-            es_marmita = (eq_info['tipo'] == 'Marmita Industrial')
-            cap_max = float(eq_info['capacidad_nominal'])
-            unidad_txt = "Kg" if es_marmita else "Placas"
+    # ---------------------------------------------------------
+    # PROCESO 1: CARGA INICIAL
+    # ---------------------------------------------------------
+    with tab_p1:
+        st.markdown("#### 📥 1. Registro de Entrada al Horno o Marmita")
+        st.caption("Registra la cantidad de placas o kilos que se introducen al iniciar la cocción.")
 
-        with col_prod:
-            producto_input = st.text_input("2. Producto / Receta:", placeholder="Ej: Pollo Asado, Arroz Primavera, Salsa Fileto, Cerdo")
-        with col_dur:
-            duracion_input = st.number_input("3. Duración (min):", min_value=5, max_value=480, value=45, step=5)
+        with st.container():
+            st.markdown('<div class="form-box">', unsafe_allow_html=True)
 
-        st.markdown("---")
+            col_e1, col_p1_in, col_d1 = st.columns([1.5, 2, 1])
+            with col_e1:
+                sel_eq_1 = st.selectbox("Equipo:", options=list(equipos_dict.keys()), format_func=lambda x: equipos_dict[x], key="p1_eq")
+                eq_info_1 = df_catalogo[df_catalogo['id'] == sel_eq_1].iloc[0]
+                es_marmita_1 = (eq_info_1['tipo'] == 'Marmita Industrial')
+                cap_max_1 = float(eq_info_1['capacidad_nominal'])
+                unidad_txt_1 = "Kg" if es_marmita_1 else "Placas"
 
-        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+            with col_p1_in:
+                prod_1 = st.text_input("Producto / Receta que Entra a Cocción:", placeholder="Ej: Pollo Asado, Arroz, Salsa Fileto, Cerdo", key="p1_prod")
+            with col_d1:
+                dur_1 = st.number_input("Duración Estimada (min):", min_value=5, max_value=480, value=45, step=5, key="p1_dur")
 
-        if not es_marmita:
-            # Hornos Rational: Placas y Unidades
-            with col_c1:
-                placas_val = st.number_input(f"Placas Cargadas (Máx: {cap_max:.0f}):", min_value=1, max_value=int(cap_max), value=min(20, int(cap_max)), step=1)
-            with col_c2:
-                unidades_tot_val = st.number_input("Total Unidades Producidas:", min_value=1, value=placas_val * 10, step=5)
-            with col_c3:
-                unidades_ok_val = st.number_input("Unidades BIEN (Conformes):", min_value=0, max_value=unidades_tot_val, value=unidades_tot_val, step=5)
-            with col_c4:
-                unidades_nok_val = unidades_tot_val - unidades_ok_val
-                st.metric("Unidades MAL (Merma):", f"{unidades_nok_val} un.", delta=f"{round(unidades_nok_val/unidades_tot_val*100, 1)}% merma" if unidades_tot_val>0 else "0%", delta_color="inverse")
-            kilos_tot_val = kilos_ok_val = kilos_nok_val = 0.0
-        else:
-            # Marmitas: Kilos
-            with col_c1:
-                kilos_tot_val = st.number_input(f"Kilos Cargados (Máx: {cap_max:.0f} Kg):", min_value=1.0, max_value=cap_max, value=min(150.0, cap_max), step=5.0)
-            with col_c2:
-                kilos_ok_val = st.number_input("Kilos BIEN (Conformes):", min_value=0.0, max_value=kilos_tot_val, value=kilos_tot_val, step=5.0)
-            with col_c3:
-                kilos_nok_val = round(kilos_tot_val - kilos_ok_val, 1)
-                st.metric("Kilos Merma / Scrap:", f"{kilos_nok_val} Kg", delta=f"{round(kilos_nok_val/kilos_tot_val*100, 1)}% merma" if kilos_tot_val>0 else "0%", delta_color="inverse")
-            with col_c4:
-                st.write(f"**Aprovechamiento:** `{round(kilos_tot_val/cap_max*100, 1)}%`")
-            placas_val = unidades_tot_val = unidades_ok_val = unidades_nok_val = 0
+            st.markdown("---")
 
-        col_mot1, col_mot2 = st.columns([2, 1])
-        with col_mot1:
-            motivo_sel = st.selectbox("📋 Motivo del Desvío o Rechazo:", MOTIVOS_RECHAZO_LIST, index=0)
-        with col_mot2:
-            motivo_otro = ""
-            if motivo_sel == "Otro":
-                motivo_otro = st.text_input("Especificar motivo:", placeholder="Escribe el detalle...")
+            col_c1_a, col_c1_b = st.columns([2, 1])
+            with col_c1_a:
+                if not es_marmita_1:
+                    placas_cargadas_in = st.number_input(f"Cantidad de Placas Depositadas en el Horno (Máx: {cap_max_1:.0f}):", min_value=1, max_value=int(cap_max_1), value=min(20, int(cap_max_1)), step=1, key="p1_placas")
+                    kg_cargados_in = 0.0
+                else:
+                    kg_cargados_in = st.number_input(f"Kilos Introducidos en la Marmita (Máx: {cap_max_1:.0f} Kg):", min_value=1.0, max_value=cap_max_1, value=min(150.0, cap_max_1), step=5.0, key="p1_kg")
+                    placas_cargadas_in = 0
+            with col_c1_b:
+                pct_ocup = round((placas_cargadas_in/cap_max_1*100) if not es_marmita_1 else (kg_cargados_in/cap_max_1*100), 1)
+                st.metric("Ocupación de Capacidad:", f"{pct_ocup}%", delta=f"{placas_cargadas_in if not es_marmita_1 else kg_cargados_in} de {cap_max_1:.0f} {unidad_txt_1}")
 
+            hoy_str = datetime.date.today().strftime("%Y-%m-%d")
+            hora_act_str = datetime.datetime.now().strftime("%H:%M:%S")
+
+            if st.button("💾 Iniciar Cocción y Guardar Carga de Placas/Kg", type="primary", use_container_width=True, key="btn_p1"):
+                if not prod_1.strip():
+                    st.error("Por favor, ingresa el nombre del Producto / Receta.")
+                else:
+                    new_id = insert_carga_inicial(
+                        equipo_alias=eq_info_1['nombre'],
+                        tipo_equipo=eq_info_1['tipo'],
+                        fecha=hoy_str,
+                        hora=hora_act_str,
+                        producto=prod_1.strip(),
+                        duracion_min=dur_1,
+                        placas_usadas=placas_cargadas_in,
+                        kilos_cargados=kg_cargados_in,
+                        operador=user_name,
+                        db_path=default_db_file
+                    )
+                    st.success(f"✅ ¡Cocción #{new_id} de '{prod_1}' iniciada en {eq_info_1['nombre']}!")
+                    st.rerun()
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # ---------------------------------------------------------
+    # PROCESO 2: CONTROL DE UNIDADES Y CALIDAD
+    # ---------------------------------------------------------
+    with tab_p2:
+        st.markdown("#### 📦 2. Registro de Unidades Conformes y Control de Calidad")
+        st.caption("Selecciona la cocción que finalizó para ingresar las unidades obtenidas y verificar si hubo desvíos.")
+
+        df_todas_cal = get_all_charges_from_db(default_db_file)
         hoy_str = datetime.date.today().strftime("%Y-%m-%d")
-        hora_actual_str = datetime.datetime.now().strftime("%H:%M:%S")
+        df_hoy_cal = df_todas_cal[df_todas_cal['Fecha'] == hoy_str].copy() if not df_todas_cal.empty else pd.DataFrame()
 
-        if st.button("💾 Guardar Operación", type="primary", use_container_width=True):
-            if not producto_input.strip():
-                st.error("Por favor, ingresa el nombre del Producto / Receta antes de guardar.")
-            else:
-                motivo_guardar = motivo_otro if motivo_sel == "Otro" else (motivo_sel if motivo_sel != "100% Conforme (Sin Desvío)" else "")
-                
-                insert_operacion_manual(
-                    equipo_alias=eq_info['nombre'],
-                    tipo_equipo=eq_info['tipo'],
-                    fecha=hoy_str,
-                    hora=hora_actual_str,
-                    producto=producto_input.strip(),
-                    duracion_min=duracion_input,
-                    placas_usadas=placas_val,
-                    placas_ok=placas_val if unidades_nok_val == 0 else max(0, placas_val - 1),
-                    placas_nok=0 if unidades_nok_val == 0 else 1,
-                    unidades_tot=unidades_tot_val,
-                    unidades_ok=unidades_ok_val,
-                    unidades_nok=unidades_nok_val,
-                    kilos_tot=kilos_tot_val,
-                    kilos_ok=kilos_ok_val,
-                    kilos_nok=kilos_nok_val,
-                    motivo_rechazo=motivo_guardar,
-                    operador=user_name,
-                    db_path=default_db_file
-                )
-                st.success(f"✅ ¡Operación de '{producto_input}' guardada exitosamente!")
-                st.rerun()
+        if not df_hoy_cal.empty:
+            cargas_abiertas = df_hoy_cal.to_dict('records')
+            opciones_cal = {
+                c['id']: f"ID #{c['id']} | {c['Hora']} | {c['Equipo_Alias'] or c['Modelo_Dev']} | {c['Programa']} ({c['Placas_Utilizadas']} Placas / {c['Kilos_Totales']} Kg) - [{c['Estado_Final']}]"
+                for c in cargas_abiertas
+            }
 
-        st.markdown('</div>', unsafe_allow_html=True)
+            sel_c_id_cal = st.selectbox("Selecciona la Cocción Terminada:", options=list(opciones_cal.keys()), format_func=lambda x: opciones_cal[x], key="p2_sel_c")
+            c_item_cal = df_hoy_cal[df_hoy_cal['id'] == sel_c_id_cal].iloc[0]
+            es_marm_cal = ("Marmita" in str(c_item_cal['Modelo_Dev']) or "Marmita" in str(c_item_cal['Equipo_Alias']))
 
-    # 2. LISTA DE OPERACIONES DEL DÍA
+            with st.container():
+                st.markdown('<div class="form-box">', unsafe_allow_html=True)
+
+                st.markdown(f"**Cocción Seleccionada:** `{c_item_cal['Programa']}` en `{c_item_cal['Equipo_Alias'] or c_item_cal['Modelo_Dev']}` ({c_item_cal['Hora']} hs)")
+
+                col_q1, col_q2, col_q3 = st.columns(3)
+
+                if not es_marm_cal:
+                    def_u_tot = int(c_item_cal['Unidades_Totales'] if c_item_cal['Unidades_Totales'] > 0 else (c_item_cal['Placas_Utilizadas'] * 10))
+                    def_u_ok = int(c_item_cal['Unidades_OK'] if c_item_cal['Unidades_OK'] > 0 else def_u_tot)
+
+                    with col_q1:
+                        u_tot_in = st.number_input("Unidades Totales Obtenidas:", min_value=1, value=def_u_tot, step=5, key="p2_u_tot")
+                    with col_q2:
+                        u_ok_in = st.number_input("Unidades BIEN (Conformes OK):", min_value=0, max_value=u_tot_in, value=min(def_u_ok, u_tot_in), step=5, key="p2_u_ok")
+                    with col_q3:
+                        u_nok_in = u_tot_in - u_ok_in
+                        st.metric("Unidades MAL (Merma / Scrap):", f"{u_nok_in} un.", delta=f"{round(u_nok_in/u_tot_in*100, 1)}% rechazo" if u_tot_in>0 else "0%", delta_color="inverse")
+                    kg_ok_in = kg_nok_in = 0.0
+                else:
+                    def_kg_tot = float(c_item_cal['Kilos_Totales'] if c_item_cal['Kilos_Totales'] > 0 else 150.0)
+                    def_kg_ok = float(c_item_cal['Kilos_OK'] if c_item_cal['Kilos_OK'] > 0 else def_kg_tot)
+
+                    with col_q1:
+                        kg_tot_in = st.number_input("Kilos Totales Obtenidos (Kg):", min_value=1.0, value=def_kg_tot, step=5.0, key="p2_kg_tot")
+                    with col_q2:
+                        kg_ok_in = st.number_input("Kilos BIEN (Conformes OK):", min_value=0.0, max_value=kg_tot_in, value=min(def_kg_ok, kg_tot_in), step=5.0, key="p2_kg_ok")
+                    with col_q3:
+                        kg_nok_in = round(kg_tot_in - kg_ok_in, 1)
+                        st.metric("Kilos de Merma (Kg NOK):", f"{kg_nok_in} Kg", delta=f"{round(kg_nok_in/kg_tot_in*100, 1)}% rechazo" if kg_tot_in>0 else "0%", delta_color="inverse")
+                    u_tot_in = u_ok_in = u_nok_in = 0
+
+                # Desplegable de motivos
+                col_m1, col_m2 = st.columns([2, 1])
+                with col_m1:
+                    mot_cur_p2 = str(c_item_cal['Motivo_Rechazo'] or "")
+                    idx_p2 = MOTIVOS_RECHAZO_LIST.index(mot_cur_p2) if mot_cur_p2 in MOTIVOS_RECHAZO_LIST else 0
+                    motivo_sel_p2 = st.selectbox("📋 Motivo del Desvío o Rechazo:", MOTIVOS_RECHAZO_LIST, index=idx_p2, key="p2_mot_sel")
+                with col_m2:
+                    motivo_otro_p2 = ""
+                    if motivo_sel_p2 == "Otro":
+                        motivo_otro_p2 = st.text_input("Especificar motivo:", placeholder="Escribe el detalle...", key="p2_mot_otro")
+
+                if st.button("💾 Guardar Control de Calidad", type="primary", use_container_width=True, key="btn_p2"):
+                    mot_fin_p2 = motivo_otro_p2 if motivo_sel_p2 == "Otro" else (motivo_sel_p2 if motivo_sel_p2 != "100% Conforme (Sin Desvío)" else "")
+                    registrar_salida_calidad(
+                        charge_id=sel_c_id_cal,
+                        unidades_tot=u_tot_in,
+                        unidades_ok=u_ok_in,
+                        unidades_nok=u_nok_in,
+                        kilos_ok=kg_ok_in,
+                        kilos_nok=kg_nok_in,
+                        motivo_rechazo=mot_fin_p2,
+                        operador=user_name,
+                        db_path=default_db_file
+                    )
+                    st.success(f"✅ ¡Calidad de Cocción #{sel_c_id_cal} guardada con éxito!")
+                    st.rerun()
+
+                st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("No hay cocciones registradas hoy. Realiza la carga en el 'Proceso 1' primero.")
+
+    # ---------------------------------------------------------
+    # HISTORIAL DEL DÍA
+    # ---------------------------------------------------------
+    st.markdown("---")
     st.markdown(f"### 📋 Operaciones Realizadas Hoy ({datetime.date.today().strftime('%d/%m/%Y')})")
     df_todas_op = get_all_charges_from_db(default_db_file)
     df_dia_op = df_todas_op[df_todas_op['Fecha'] == hoy_str].copy() if not df_todas_op.empty else pd.DataFrame()
@@ -364,16 +429,16 @@ if user_role == "Operario":
         df_tabla_op = df_dia_op[[
             'id', 'Hora', 'Equipo', 'Programa', 'Duracion_Min',
             'Placas_Utilizadas', 'Unidades_OK', 'Unidades_Rechazadas',
-            'Kilos_OK', 'Kilos_Rechazados', 'Motivo_Rechazo'
+            'Kilos_OK', 'Kilos_Rechazados', 'Motivo_Rechazo', 'Estado_Final'
         ]].copy()
         df_tabla_op.columns = [
             'ID', 'Hora', 'Equipo', 'Producto / Receta', 'Minutos',
             'Placas', 'Unidades OK', 'Unidades Mal',
-            'Kg OK', 'Kg Merma', 'Motivo de Desvío'
+            'Kg OK', 'Kg Merma', 'Motivo de Desvío', 'Estado'
         ]
         st.dataframe(df_tabla_op, hide_index=True, use_container_width=True)
     else:
-        st.info("No se han registrado operaciones hoy. Completa el formulario arriba para agregar la primera.")
+        st.info("No se han registrado operaciones hoy.")
 
 # =========================================================
 # 📊 VISTA SUPERVISOR: DASHBOARD COMPLETO OEE RATIONAL
@@ -659,7 +724,7 @@ else:
             st.markdown("#### 🛑 Tasa de Finalización (RETURN vs ABORT)")
             st_counts = filtered_df['Estado_Final'].value_counts().reset_index()
             st_counts.columns = ['Estado', 'Cantidad']
-            fig_st = px.pie(st_counts, names='Estado', values='Cantidad', color='Estado', color_discrete_map={'RETURN': '#10B981', 'ABORT': '#EF4444', 'EN CURSO / INCOMPLETO': '#F59E0B'})
+            fig_st = px.pie(st_counts, names='Estado', values='Cantidad', color='Estado', color_discrete_map={'RETURN': '#10B981', 'ABORT': '#EF4444', 'EN CURSO / INCOMPLETO': '#F59E0B', 'EN COCCIÓN / PENDIENTE CALIDAD': '#3B82F6', 'CON RECHAZO': '#EF4444'})
             fig_st.update_layout(height=320, paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_st, use_container_width=True)
 

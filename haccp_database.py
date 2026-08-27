@@ -297,15 +297,12 @@ def save_df_to_db(df, db_path=None):
 
     return count_after - count_before
 
-def insert_operacion_manual(
+def insert_carga_inicial(
     equipo_alias, tipo_equipo, fecha, hora, producto, duracion_min,
-    placas_usadas=0, placas_ok=0, placas_nok=0,
-    unidades_tot=0, unidades_ok=0, unidades_nok=0,
-    kilos_tot=0.0, kilos_ok=0.0, kilos_nok=0.0,
-    motivo_rechazo="", operador="", db_path=None
+    placas_usadas=0, kilos_cargados=0.0, operador="", db_path=None
 ):
     """
-    Inserta una operación de cocción registrada por el operario/cocinero.
+    PASO 1: Inserta el inicio de la cocción (Placas en horno o Kilos en marmita).
     """
     init_db(db_path)
     conn = get_db_connection(db_path)
@@ -328,11 +325,6 @@ def insert_operacion_manual(
     dur_h = round(float(duracion_min) / 60.0, 2)
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    if (unidades_nok > 0 or kilos_nok > 0 or placas_nok > 0):
-        st_final = "CON RECHAZO"
-    else:
-        st_final = "RETURN"
-
     cap_placas = 20 if tipo_equipo == "Horno Rational" else 0
 
     cursor.execute("""
@@ -345,7 +337,7 @@ def insert_operacion_manual(
         equipo_alias, motivo_rechazo, timezone, inserted_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        f"Manual ({operador})" if operador else "Registro Manual",
+        f"Carga Inicial ({operador})" if operador else "Carga Inicial",
         next_chnr,
         str(equipo_alias),
         str(tipo_equipo),
@@ -356,23 +348,58 @@ def insert_operacion_manual(
         hora_num,
         str(producto),
         "Cocción / Preparación",
-        st_final,
+        "EN COCCIÓN / PENDIENTE CALIDAD",
         float(duracion_min),
         dur_h,
         cap_placas,
         int(placas_usadas),
-        int(placas_ok),
-        int(placas_nok),
-        int(unidades_tot),
-        int(unidades_ok),
-        int(unidades_nok),
-        float(kilos_tot),
-        float(kilos_ok),
-        float(kilos_nok),
+        int(placas_usadas),
+        0,
+        0,
+        0,
+        0,
+        float(kilos_cargados),
+        0.0,
+        0.0,
         str(equipo_alias),
-        str(motivo_rechazo),
+        "Pendiente de Calidad",
         operador,
         now_str
+    ))
+    conn.commit()
+    inserted_id = cursor.lastrowid
+    conn.close()
+    return inserted_id
+
+def registrar_salida_calidad(
+    charge_id, unidades_tot=0, unidades_ok=0, unidades_nok=0,
+    kilos_ok=0.0, kilos_nok=0.0,
+    motivo_rechazo="", operador="", db_path=None
+):
+    """
+    PASO 2: Registra las unidades o kilos conformes vs merma al terminar la cocción.
+    """
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+
+    st_final = "CON RECHAZO" if (unidades_nok > 0 or kilos_nok > 0) else "RETURN"
+
+    cursor.execute("""
+    UPDATE haccp_charges
+    SET 
+        unidades_totales = ?,
+        unidades_conformes_ok = ?,
+        unidades_rechazadas_nok = ?,
+        kilos_conformes_ok = ?,
+        kilos_rechazados_nok = ?,
+        final_status = ?,
+        motivo_rechazo = ?
+    WHERE id = ?
+    """, (
+        int(unidades_tot), int(unidades_ok), int(unidades_nok),
+        float(kilos_ok), float(kilos_nok),
+        st_final, str(motivo_rechazo), int(charge_id)
     ))
     conn.commit()
     conn.close()
