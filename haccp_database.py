@@ -71,11 +71,12 @@ def get_db_connection(db_path=None):
 
 def init_db(db_path=None):
     """
-    Inicializa las tablas SQLite y asegura la presencia de columnas de placas, unidades y calidad.
+    Inicializa las tablas SQLite, catálogo de equipos y registros históricos.
     """
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
 
+    # 1. Tabla de Cargas
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS haccp_charges (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,6 +106,10 @@ def init_db(db_path=None):
         unidades_totales INTEGER DEFAULT 0,
         unidades_conformes_ok INTEGER DEFAULT 0,
         unidades_rechazadas_nok INTEGER DEFAULT 0,
+        kilos_totales REAL DEFAULT 0,
+        kilos_conformes_ok REAL DEFAULT 0,
+        kilos_rechazados_nok REAL DEFAULT 0,
+        equipo_alias TEXT,
         motivo_rechazo TEXT,
         inserted_at TEXT,
         UNIQUE(sn, chnr) ON CONFLICT IGNORE
@@ -120,6 +125,10 @@ def init_db(db_path=None):
         ("unidades_totales", "INTEGER DEFAULT 0"),
         ("unidades_conformes_ok", "INTEGER DEFAULT 0"),
         ("unidades_rechazadas_nok", "INTEGER DEFAULT 0"),
+        ("kilos_totales", "REAL DEFAULT 0"),
+        ("kilos_conformes_ok", "REAL DEFAULT 0"),
+        ("kilos_rechazados_nok", "REAL DEFAULT 0"),
+        ("equipo_alias", "TEXT"),
         ("motivo_rechazo", "TEXT")
     ]:
         try:
@@ -127,7 +136,20 @@ def init_db(db_path=None):
         except sqlite3.OperationalError:
             pass
 
-    # Tabla de auditoría de archivos
+    # 2. Tabla de Catálogo de Equipos de Planta
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS catalogo_equipos (
+        id TEXT PRIMARY KEY,
+        tipo TEXT,
+        nombre TEXT,
+        sn TEXT,
+        capacidad_nominal REAL,
+        unidad TEXT,
+        estado TEXT DEFAULT 'Activo'
+    )
+    """)
+
+    # 3. Tabla de auditoría de archivos
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS haccp_files_log (
         file_path TEXT PRIMARY KEY,
@@ -137,38 +159,60 @@ def init_db(db_path=None):
     )
     """)
 
-    # Inicializar registros con valores coherentes si están nulos
+    conn.commit()
+
+    # Cargar catálogo de equipos base si está vacío
+    cursor.execute("SELECT COUNT(*) FROM catalogo_equipos")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("SELECT DISTINCT sn, dev_type FROM haccp_charges")
+        sn_rows = cursor.fetchall()
+        
+        idx = 1
+        for r in sn_rows:
+            sn_val = r['sn']
+            dev_val = r['dev_type']
+            cap = get_rational_capacity(dev_val)
+            cursor.execute("""
+            INSERT OR REPLACE INTO catalogo_equipos (id, tipo, nombre, sn, capacidad_nominal, unidad, estado)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (f"HORNO_{idx}", "Horno Rational", f"Horno Rational #{idx} ({dev_val})", sn_val, cap, "Placas", "Activo"))
+            idx += 1
+
+        # Agregar Marmitas Industriales
+        cursor.execute("""
+        INSERT OR REPLACE INTO catalogo_equipos (id, tipo, nombre, sn, capacidad_nominal, unidad, estado)
+        VALUES 
+            ('MARMITA_1', 'Marmita Industrial', 'Marmita #1 (150 Kg)', 'MARM-01', 150.0, 'Kg', 'Activo'),
+            ('MARMITA_2', 'Marmita Industrial', 'Marmita #2 (200 Kg)', 'MARM-02', 200.0, 'Kg', 'Activo')
+        """)
+        conn.commit()
+
+    # Relleno automático de datos históricos (Pre-Septiembre) para que P=100% y Q=100%
     cursor.execute("""
     UPDATE haccp_charges
     SET 
         placas_capacidad_max = CASE WHEN category = 'Limpieza (iCareSystem)' THEN 0 ELSE 20 END,
         placas_utilizadas = CASE WHEN category = 'Limpieza (iCareSystem)' THEN 0 ELSE 20 END,
-        placas_conformes_ok = CASE 
-            WHEN category = 'Limpieza (iCareSystem)' THEN 0 
-            WHEN final_status = 'RETURN' THEN 20 
-            ELSE 0 
-        END,
-        placas_rechazadas_nok = CASE 
-            WHEN category = 'Limpieza (iCareSystem)' THEN 0 
-            WHEN final_status = 'RETURN' THEN 0 
-            ELSE 20 
-        END,
+        placas_conformes_ok = CASE WHEN category = 'Limpieza (iCareSystem)' THEN 0 ELSE 20 END,
+        placas_rechazadas_nok = 0,
         unidades_totales = CASE WHEN category = 'Limpieza (iCareSystem)' THEN 0 ELSE 200 END,
-        unidades_conformes_ok = CASE 
-            WHEN category = 'Limpieza (iCareSystem)' THEN 0 
-            WHEN final_status = 'RETURN' THEN 200 
-            ELSE 0 
-        END,
-        unidades_rechazadas_nok = CASE 
-            WHEN category = 'Limpieza (iCareSystem)' THEN 0 
-            WHEN final_status = 'RETURN' THEN 0 
-            ELSE 200 
-        END
-    WHERE placas_utilizadas IS NULL
+        unidades_conformes_ok = CASE WHEN category = 'Limpieza (iCareSystem)' THEN 0 ELSE 200 END,
+        unidades_rechazadas_nok = 0,
+        kilos_totales = CASE WHEN category = 'Limpieza (iCareSystem)' THEN 0 ELSE 150.0 END,
+        kilos_conformes_ok = CASE WHEN category = 'Limpieza (iCareSystem)' THEN 0 ELSE 150.0 END,
+        kilos_rechazados_nok = 0,
+        motivo_rechazo = ''
+    WHERE date < '2026-09-01' OR placas_utilizadas IS NULL
     """)
-
     conn.commit()
     conn.close()
+
+def get_equipos_catalogo(db_path=None):
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    df = pd.read_sql_query("SELECT * FROM catalogo_equipos WHERE estado = 'Activo' ORDER BY tipo, id", conn)
+    conn.close()
+    return df
 
 def save_df_to_db(df, db_path=None):
     if df.empty:
@@ -205,12 +249,12 @@ def save_df_to_db(df, db_path=None):
         
         cap_max = get_rational_capacity(dev_t) if cat != 'Limpieza (iCareSystem)' else 0
         used = cap_max if cat != 'Limpieza (iCareSystem)' else 0
-        ok_count = used if st_final == 'RETURN' else 0
-        nok_count = 0 if st_final == 'RETURN' else used
+        ok_count = used
+        nok_count = 0
         
         u_tot = used * 10
-        u_ok = ok_count * 10
-        u_nok = nok_count * 10
+        u_ok = u_tot
+        u_nok = 0
 
         cursor.execute("""
         INSERT OR IGNORE INTO haccp_charges (
@@ -218,9 +262,10 @@ def save_df_to_db(df, db_path=None):
             program, category, final_status, duration_min, duration_hours,
             max_cab_temp, max_core_temp, door_open_count, cooking_modes, timezone,
             placas_capacidad_max, placas_utilizadas, placas_conformes_ok, placas_rechazadas_nok,
-            unidades_totales, unidades_conformes_ok, unidades_rechazadas_nok, motivo_rechazo,
-            inserted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            unidades_totales, unidades_conformes_ok, unidades_rechazadas_nok,
+            kilos_totales, kilos_conformes_ok, kilos_rechazados_nok,
+            motivo_rechazo, inserted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             str(row.get('Archivo', '')),
             int(row.get('Carga_Nr', 0)),
@@ -248,6 +293,9 @@ def save_df_to_db(df, db_path=None):
             u_tot,
             u_ok,
             u_nok,
+            150.0,
+            150.0,
+            0.0,
             "",
             now_str
         ))
@@ -260,40 +308,51 @@ def save_df_to_db(df, db_path=None):
 
     return count_after - count_before
 
-def save_operario_placas(charge_id, placas_utilizadas, db_path=None):
+def save_operario_carga(charge_id, equipo_id, valor_cargado, unidad="Placas", db_path=None):
     """
-    Guarda el registro de placas ubicadas en el horno por el operario.
+    Guarda el registro de placas (horno) o kilos (marmita) introducidos.
     """
     init_db(db_path)
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
-    cursor.execute("""
-    UPDATE haccp_charges
-    SET placas_utilizadas = ?
-    WHERE id = ?
-    """, (int(placas_utilizadas), int(charge_id)))
+    if unidad == "Placas":
+        cursor.execute("""
+        UPDATE haccp_charges
+        SET placas_utilizadas = ?, equipo_alias = ?
+        WHERE id = ?
+        """, (int(valor_cargado), str(equipo_id), int(charge_id)))
+    else:
+        cursor.execute("""
+        UPDATE haccp_charges
+        SET kilos_totales = ?, equipo_alias = ?
+        WHERE id = ?
+        """, (float(valor_cargado), str(equipo_id), int(charge_id)))
     conn.commit()
     conn.close()
 
-def save_operario_calidad(charge_id, unidades_totales, unidades_ok, unidades_nok, motivo="", db_path=None):
+def save_operario_calidad_completa(charge_id, cant_total, cant_ok, cant_nok, motivo="", unidad="Unidades", db_path=None):
     """
-    Guarda el registro de unidades realizadas y conformes/defectuosas por el operario.
+    Guarda el registro de calidad en unidades (horno) o kilos (marmita).
     """
     init_db(db_path)
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
-    cursor.execute("""
-    UPDATE haccp_charges
-    SET unidades_totales = ?, unidades_conformes_ok = ?, unidades_rechazadas_nok = ?, motivo_rechazo = ?
-    WHERE id = ?
-    """, (int(unidades_totales), int(unidades_ok), int(unidades_nok), str(motivo), int(charge_id)))
+    if unidad == "Unidades":
+        cursor.execute("""
+        UPDATE haccp_charges
+        SET unidades_totales = ?, unidades_conformes_ok = ?, unidades_rechazadas_nok = ?, motivo_rechazo = ?
+        WHERE id = ?
+        """, (int(cant_total), int(cant_ok), int(cant_nok), str(motivo), int(charge_id)))
+    else:
+        cursor.execute("""
+        UPDATE haccp_charges
+        SET kilos_totales = ?, kilos_conformes_ok = ?, kilos_rechazados_nok = ?, motivo_rechazo = ?
+        WHERE id = ?
+        """, (float(cant_total), float(cant_ok), float(cant_nok), str(motivo), int(charge_id)))
     conn.commit()
     conn.close()
 
 def update_charge_production_records(records_df_or_list, db_path=None):
-    """
-    Actualiza la cantidad de placas, unidades y motivo de rechazo de las cargas.
-    """
     init_db(db_path)
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
@@ -305,16 +364,13 @@ def update_charge_production_records(records_df_or_list, db_path=None):
 
     for r in records:
         c_id = r.get('id')
-        sn = r.get('Serie_SN') or r.get('sn')
-        chnr = r.get('Carga_Nr') or r.get('chnr')
-        
-        placas_used = int(r.get('Placas_Utilizadas', r.get('placas_utilizadas', 0)))
-        placas_ok = int(r.get('Placas_OK', r.get('placas_conformes_ok', 0)))
-        placas_nok = int(r.get('Placas_Rechazadas', r.get('placas_rechazadas_nok', 0)))
-        u_tot = int(r.get('Unidades_Totales', r.get('unidades_totales', 0)))
-        u_ok = int(r.get('Unidades_OK', r.get('unidades_conformes_ok', 0)))
-        u_nok = int(r.get('Unidades_Rechazadas', r.get('unidades_rechazadas_nok', 0)))
-        motivo = str(r.get('Motivo_Rechazo', r.get('motivo_rechazo', '')))
+        placas_used = int(r.get('Placas_Utilizadas', 20))
+        placas_ok = int(r.get('Placas_OK', placas_used))
+        placas_nok = int(r.get('Placas_Rechazadas', 0))
+        u_tot = int(r.get('Unidades_Totales', placas_used * 10))
+        u_ok = int(r.get('Unidades_OK', u_tot))
+        u_nok = int(r.get('Unidades_Rechazadas', 0))
+        motivo = str(r.get('Motivo_Rechazo', ''))
 
         if c_id:
             cursor.execute("""
@@ -324,14 +380,6 @@ def update_charge_production_records(records_df_or_list, db_path=None):
                 motivo_rechazo = ?
             WHERE id = ?
             """, (placas_used, placas_ok, placas_nok, u_tot, u_ok, u_nok, motivo, c_id))
-        elif sn and chnr:
-            cursor.execute("""
-            UPDATE haccp_charges
-            SET placas_utilizadas = ?, placas_conformes_ok = ?, placas_rechazadas_nok = ?,
-                unidades_totales = ?, unidades_conformes_ok = ?, unidades_rechazadas_nok = ?,
-                motivo_rechazo = ?
-            WHERE sn = ? AND chnr = ?
-            """, (placas_used, placas_ok, placas_nok, u_tot, u_ok, u_nok, motivo, sn, chnr))
 
     conn.commit()
     conn.close()
@@ -435,6 +483,10 @@ def get_all_charges_from_db(db_path=None):
         unidades_totales as Unidades_Totales,
         unidades_conformes_ok as Unidades_OK,
         unidades_rechazadas_nok as Unidades_Rechazadas,
+        kilos_totales as Kilos_Totales,
+        kilos_conformes_ok as Kilos_OK,
+        kilos_rechazados_nok as Kilos_Rechazados,
+        equipo_alias as Equipo_Alias,
         motivo_rechazo as Motivo_Rechazo,
         inserted_at as Registrado_En
     FROM haccp_charges

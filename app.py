@@ -11,7 +11,7 @@ from haccp_parser import load_multiple_haccp_files
 from haccp_database import (
     init_db, save_df_to_db, scan_and_sync_folder,
     get_all_charges_from_db, clear_database,
-    save_operario_placas, save_operario_calidad,
+    get_equipos_catalogo, save_operario_carga, save_operario_calidad_completa,
     update_charge_production_records,
     get_base_app_dir, get_default_db_path,
     RATIONAL_MANUAL_CAPACITIES, get_rational_capacity
@@ -161,7 +161,6 @@ DEFAULT_USERS = {
 
 def get_authorized_users():
     if hasattr(st, "secrets") and "passwords" in st.secrets:
-        # Si se definen contraseñas en Streamlit Secrets
         custom_dict = {}
         for mail, pwd in st.secrets["passwords"].items():
             base_info = DEFAULT_USERS.get(mail.strip().lower(), {"rol": "Supervisor", "nombre": mail.split('@')[0]})
@@ -243,6 +242,7 @@ if not os.path.exists(default_logs_dir):
 
 init_db(default_db_file)
 df_db = get_all_charges_from_db(default_db_file)
+df_catalogo = get_equipos_catalogo(default_db_file)
 
 user_role = st.session_state.get("user_role", "Supervisor")
 user_name = st.session_state.get("user_name", "")
@@ -295,7 +295,6 @@ if user_role == "Supervisor":
     categorias = sorted(df_db['Categoria'].dropna().unique().tolist()) if not df_db.empty else []
     selected_cats = st.sidebar.multiselect("Categoría:", categorias, default=categorias)
 
-    # Filtrar datos
     filtered_df = df_db.copy() if not df_db.empty else pd.DataFrame()
     if not filtered_df.empty:
         if selected_series:
@@ -306,7 +305,6 @@ if user_role == "Supervisor":
         if selected_cats:
             filtered_df = filtered_df[filtered_df['Categoria'].isin(selected_cats)]
 else:
-    # Para Operario: ve todas las cargas de cocción
     filtered_df = df_db.copy() if not df_db.empty else pd.DataFrame()
     date_range = []
 
@@ -340,7 +338,7 @@ total_placas_utilizadas = df_cooking['Placas_Utilizadas'].fillna(df_cooking['Cap
 total_capacidad_teorica_placas = df_cooking['Capacidad_Placas_Max'].sum() if not df_cooking.empty else 0
 performance = min(1.0, max(0.0, total_placas_utilizadas / total_capacidad_teorica_placas)) if total_capacidad_teorica_placas > 0 else 1.0
 
-# 3. Calidad (Q) basada en unidades o placas
+# 3. Calidad (Q)
 total_unidades = df_cooking['Unidades_Totales'].sum() if not df_cooking.empty else 0
 total_unidades_ok = df_cooking['Unidades_OK'].sum() if not df_cooking.empty else 0
 total_unidades_nok = df_cooking['Unidades_Rechazadas'].sum() if not df_cooking.empty else 0
@@ -351,35 +349,63 @@ quality = min(1.0, max(0.0, total_unidades_ok / total_unidades)) if total_unidad
 # 4. OEE Global
 oee = availability * performance * quality
 
+# Lista de motivos de rechazo estandarizada
+MOTIVOS_RECHAZO_LIST = [
+    "100% Conforme (Sin Desvío)",
+    "Cocción Quemada / Exceso de Calor",
+    "Cocción Cruda / Falta de Temperatura",
+    "Deshidratado / Seco",
+    "Pérdida Térmica (Puerta Abierta / Falla)",
+    "Deformación / Error de Textura o Corte",
+    "Contaminación Cruzada o Caída",
+    "Error en Dosificación de Receta",
+    "Otro"
+]
+
 # =========================================================
-# VISTA EXCLUSIVA: OPERARIO DE PLANTA (fvannella)
+# VISTA EXCLUSIVA: COCINERO / OPERARIO DE PLANTA (fvannella)
 # =========================================================
 if user_role == "Operario":
-    st.markdown('<div class="main-title">👨‍🍳 Terminal de Operación de Hornos Rational</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="sub-title">Operario Conectado: <b>{user_name}</b> | Registro de Carga de Placas y Control de Unidades</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">👨‍🍳 Terminal de Operación de Cocina</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sub-title">Cocinero: <b>{user_name}</b> | Registro Rápido de Carga y Calidad</div>', unsafe_allow_html=True)
 
-    # Indicadores rápidos para el operario
+    # Selector de Equipo de Planta (Hornos vs Marmitas)
+    st.markdown("#### 🏭 Selección de Equipo a Auditar")
+    equipos_dict = {
+        r['id']: f"{r['nombre']} [{r['tipo']} - Capacidad: {r['capacidad_nominal']:.0f} {r['unidad']}]"
+        for _, r in df_catalogo.iterrows()
+    }
+    sel_eq_id = st.selectbox("Selecciona el Horno o Marmita:", options=list(equipos_dict.keys()), format_func=lambda x: equipos_dict[x], key="op_eq_sel")
+    eq_row = df_catalogo[df_catalogo['id'] == sel_eq_id].iloc[0]
+    
+    es_marmita = (eq_row['tipo'] == 'Marmita Industrial')
+    unidad_carga = "Kg" if es_marmita else "Placas"
+    cap_eq_max = float(eq_row['capacidad_nominal'])
+
+    st.info(f"📍 **Equipo Activo:** {eq_row['nombre']} | **Tipo:** {eq_row['tipo']} | **Capacidad Nominal:** {cap_eq_max:.0f} {unidad_carga}")
+
+    # Indicadores rápidos del cocinero
     col_op1, col_op2, col_op3, col_op4 = st.columns(4)
     with col_op1:
         st.markdown(f"""
         <div class="kpi-card">
-            <div class="kpi-label">Placas Cargadas (Total)</div>
-            <div class="kpi-value" style="color: #1D4ED8;">{total_placas_utilizadas:.0f}</div>
-            <div class="kpi-badge badge-info">Capacidad: {total_capacidad_teorica_placas:.0f} placas</div>
+            <div class="kpi-label">{'Kilos Procesados' if es_marmita else 'Placas Cargadas'}</div>
+            <div class="kpi-value" style="color: #1D4ED8;">{total_placas_utilizadas:.0f} {unidad_carga}</div>
+            <div class="kpi-badge badge-info">Capacidad: {total_capacidad_teorica_placas:.0f} {unidad_carga}</div>
         </div>
         """, unsafe_allow_html=True)
     with col_op2:
         st.markdown(f"""
         <div class="kpi-card">
-            <div class="kpi-label">Aprovechamiento de Horno</div>
+            <div class="kpi-label">Aprovechamiento de Cámara</div>
             <div class="kpi-value" style="color: #0B2545;">{performance*100:.1f}%</div>
-            <div class="kpi-badge badge-info">Rendimiento Cámara</div>
+            <div class="kpi-badge badge-info">Rendimiento Operativo</div>
         </div>
         """, unsafe_allow_html=True)
     with col_op3:
         st.markdown(f"""
         <div class="kpi-card">
-            <div class="kpi-label">Unidades Realizadas (OK)</div>
+            <div class="kpi-label">{'Kilos Conformes (OK)' if es_marmita else 'Unidades Conformes (OK)'}</div>
             <div class="kpi-value" style="color: #059669;">{total_unidades_ok:.0f}</div>
             <div class="kpi-badge badge-success">De {total_unidades:.0f} producidas</div>
         </div>
@@ -389,114 +415,116 @@ if user_role == "Operario":
         <div class="kpi-card">
             <div class="kpi-label">Tasa de Calidad</div>
             <div class="kpi-value" style="color: #059669;">{quality*100:.1f}%</div>
-            <div class="kpi-badge badge-danger">Merma: {total_unidades_nok:.0f} un.</div>
+            <div class="kpi-badge badge-danger">Merma: {total_unidades_nok:.0f}</div>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Las 2 ventanas exclusivas para el operario
-    tab_op_placas, tab_op_calidad = st.tabs([
-        "📥 1. Ubicación de Placas en el Horno (Carga y Capacidad)",
-        "📦 2. Registro de Unidades Realizadas y Calidad (OK vs Mal)"
+    # Las 2 ventanas exclusivas para el cocinero
+    tab_op_carga, tab_op_calidad = st.tabs([
+        f"📥 1. Registro de Carga ({'Kilos Introducidos' if es_marmita else 'Placas Depositadas'})",
+        f"📦 2. Control de Calidad ({'Kilos OK vs Merma' if es_marmita else 'Unidades OK vs Mal'})"
     ])
 
-    # --- VENTANA 1 OPERARIO: PLACAS DEPOSITADAS EN HORNO ---
-    with tab_op_placas:
-        st.subheader("📥 1. Ubicación y Carga de Placas en Cámara de Horno")
-        st.markdown("Selecciona la cocción y define **cuántas placas/bandejas se depositaron en el horno**.")
-
+    # --- VENTANA 1: CARGA DE PLACAS O KILOS ---
+    with tab_op_carga:
+        st.subheader(f"📥 1. Registro de Carga en {eq_row['nombre']}")
+        
         if not df_cooking.empty:
             cargas_list = df_cooking.sort_values(by='id', ascending=False).to_dict('records')
             opciones_cargas = {
-                c['id']: f"ID #{c['id']} | Horno {c['Serie_SN'][-5:]} ({c['Modelo_Dev']}) | {c['Fecha']} {c['Hora']} | Prog: {c['Programa']} ({c['Duracion_Min']} min)"
+                c['id']: f"Carga #{c['id']} | {c['Fecha']} {c['Hora']} | Prog: {c['Programa']} ({c['Duracion_Min']} min)"
                 for c in cargas_list
             }
+            sel_c_id_1 = st.selectbox("Selecciona la Cocción en Curso:", options=list(opciones_cargas.keys()), format_func=lambda x: opciones_cargas[x], key="op_c_sel_1")
+            carga_item_1 = df_cooking[df_cooking['id'] == sel_c_id_1].iloc[0]
 
-            sel_charge_id = st.selectbox("Selecciona la Cocción / Lote:", options=list(opciones_cargas.keys()), format_func=lambda x: opciones_cargas[x], key="op_sel_carga_1")
-            carga_sel = df_cooking[df_cooking['id'] == sel_charge_id].iloc[0]
+            col_cp1, col_cp2 = st.columns([1, 1])
 
-            cap_max = int(carga_sel['Capacidad_Placas_Max']) if pd.notnull(carga_sel['Capacidad_Placas_Max']) and carga_sel['Capacidad_Placas_Max'] > 0 else get_rational_capacity(carga_sel['Modelo_Dev'])
-            current_used = int(carga_sel['Placas_Utilizadas']) if pd.notnull(carga_sel['Placas_Utilizadas']) else cap_max
+            with col_cp1:
+                st.markdown("#### Datos de la Carga")
+                if not es_marmita:
+                    val_placas = int(carga_item_1['Placas_Utilizadas'] or cap_eq_max)
+                    cant_ingresada = st.slider("Cantidad de Placas Depositadas:", 1, int(cap_eq_max), min(val_placas, int(cap_eq_max)))
+                    pct_aprov = round((cant_ingresada / cap_eq_max) * 100, 1)
+                    st.metric("Aprovechamiento de Cámara:", f"{pct_aprov}%", delta=f"{cant_ingresada} de {int(cap_eq_max)} guías")
+                else:
+                    val_kg = float(carga_item_1['Kilos_Totales'] or cap_eq_max)
+                    cant_ingresada = st.number_input("Kilos Introducidos en Marmita (Kg):", min_value=1.0, max_value=cap_eq_max, value=min(val_kg, cap_eq_max), step=5.0)
+                    pct_aprov = round((cant_ingresada / cap_eq_max) * 100, 1)
+                    st.metric("Capacidad Ocupada de Marmita:", f"{pct_aprov}%", delta=f"{cant_ingresada:.1f} Kg de {cap_eq_max:.0f} Kg")
 
-            col_form_p, col_visual_p = st.columns([1, 1])
-
-            with col_form_p:
-                st.markdown(f"#### Parámetros de Carga - Horno `{carga_sel['Serie_SN']}`")
-                st.info(f"**Modelo de Horno:** {carga_sel['Modelo_Dev']} | **Capacidad de Manual:** {cap_max} Placas GN")
-
-                placas_cargadas = st.slider(
-                    "Cantidad de Placas Depositadas en el Horno:",
-                    min_value=1,
-                    max_value=cap_max,
-                    value=min(current_used, cap_max),
-                    step=1,
-                    help="Indica cuántas bandejas/placas se introdujeron en las guías del horno."
-                )
-
-                pct_ocup = round((placas_cargadas / cap_max) * 100, 1)
-                st.metric("Aprovechamiento de Cámara de esta Carga:", f"{pct_ocup}%", delta=f"{placas_cargadas} de {cap_max} guías ocupadas")
-
-                if st.button("💾 Guardar Ubicación de Placas", type="primary", use_container_width=True):
-                    save_operario_placas(sel_charge_id, placas_cargadas, db_path=default_db_file)
-                    st.success(f"✅ ¡Se registraron {placas_cargadas} placas depositadas en la carga #{sel_charge_id}!")
+                if st.button("💾 Confirmar y Guardar Carga", type="primary", use_container_width=True):
+                    save_operario_carga(sel_c_id_1, eq_row['nombre'], cant_ingresada, unidad=unidad_carga, db_path=default_db_file)
+                    st.success(f"✅ ¡Carga #{sel_c_id_1} guardada con {cant_ingresada} {unidad_carga}!")
                     st.rerun()
 
-            with col_visual_p:
-                st.markdown("#### 🔲 Esquema de Niveles / Guías del Horno Rational")
-                st.markdown(f"*Visualización gráfica de los {cap_max} niveles del carro/cámara:*")
-                
-                # Renderizar las guías del horno
-                for nivel in range(cap_max, 0, -1):
-                    if nivel <= placas_cargadas:
-                        st.markdown(f'<div class="guide-slot-filled">🟢 Guía #{nivel:02d}: PLACA OCUPADA / CARGADA</div>', unsafe_allow_html=True)
-                    else:
-                        st.markdown(f'<div class="guide-slot-empty">⚪ Guía #{nivel:02d}: Guía Vacía (Libre)</div>', unsafe_allow_html=True)
+            with col_cp2:
+                if not es_marmita:
+                    st.markdown(f"#### 🔲 Esquema de Niveles de {eq_row['nombre']}")
+                    for nivel in range(int(cap_eq_max), 0, -1):
+                        if nivel <= cant_ingresada:
+                            st.markdown(f'<div class="guide-slot-filled">🟢 Guía #{nivel:02d}: PLACA OCUPADA</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown(f'<div class="guide-slot-empty">⚪ Guía #{nivel:02d}: Guía Libre</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f"#### 🥣 Nivel de Llenado de {eq_row['nombre']}")
+                    st.progress(min(1.0, cant_ingresada / cap_eq_max))
+                    st.write(f"Ocupación: **{cant_ingresada:.1f} Kg / {cap_eq_max:.0f} Kg** ({pct_aprov}%)")
         else:
-            st.info("No hay registros de cocción disponibles para asignar placas.")
+            st.info("No hay cargas disponibles para asignar.")
 
-    # --- VENTANA 2 OPERARIO: UNIDADES REALIZADAS Y CALIDAD ---
+    # --- VENTANA 2: CONTROL DE CALIDAD Y MOTIVO DE RECHAZO ---
     with tab_op_calidad:
-        st.subheader("📦 2. Control de Calidad: Unidades Realizadas, Conformes y Merma")
-        st.markdown("Registra **cuántas unidades salieron bien (conformes)** y **cuántas salieron mal (rechazos)** de la cocción.")
+        st.subheader(f"📦 2. Control de Calidad de Producto en {eq_row['nombre']}")
 
         if not df_cooking.empty:
-            sel_charge_id_2 = st.selectbox("Selecciona la Cocción Terminada:", options=list(opciones_cargas.keys()), format_func=lambda x: opciones_cargas[x], key="op_sel_carga_2")
-            carga_sel_2 = df_cooking[df_cooking['id'] == sel_charge_id_2].iloc[0]
+            sel_c_id_2 = st.selectbox("Selecciona la Cocción Finalizada:", options=list(opciones_cargas.keys()), format_func=lambda x: opciones_cargas[x], key="op_c_sel_2")
+            carga_item_2 = df_cooking[df_cooking['id'] == sel_c_id_2].iloc[0]
 
-            val_tot = int(carga_sel_2['Unidades_Totales']) if pd.notnull(carga_sel_2['Unidades_Totales']) and carga_sel_2['Unidades_Totales'] > 0 else int(carga_sel_2['Placas_Utilizadas'] or 20) * 10
-            val_ok = int(carga_sel_2['Unidades_OK']) if pd.notnull(carga_sel_2['Unidades_OK']) else val_tot
-            val_nok = int(carga_sel_2['Unidades_Rechazadas']) if pd.notnull(carga_sel_2['Unidades_Rechazadas']) else 0
-            val_motivo = str(carga_sel_2['Motivo_Rechazo']) if pd.notnull(carga_sel_2['Motivo_Rechazo']) else ""
+            with st.form("form_calidad_cocinero"):
+                st.markdown(f"#### Registro de Salida - Programa: **{carga_item_2['Programa']}**")
 
-            with st.form("form_calidad_operario"):
-                st.markdown(f"#### Carga #{sel_charge_id_2} - Programa: **{carga_sel_2['Programa']}**")
+                col_cq1, col_cq2, col_cq3 = st.columns(3)
+                if not es_marmita:
+                    def_tot = int(carga_item_2['Unidades_Totales'] or 200)
+                    def_ok = int(carga_item_2['Unidades_OK'] or def_tot)
+                    with col_cq1:
+                        tot_prod = st.number_input("Unidades Totales Producidas:", min_value=1, value=def_tot, step=5)
+                    with col_cq2:
+                        ok_prod = st.number_input("Unidades que Salieron BIEN (OK):", min_value=0, max_value=tot_prod, value=min(def_ok, tot_prod), step=5)
+                    with col_cq3:
+                        nok_prod = tot_prod - ok_prod
+                        st.metric("Unidades MAL (Merma):", f"{nok_prod} un.", delta=f"{round(nok_prod/tot_prod*100, 1)}% rechazo" if tot_prod>0 else "0%", delta_color="inverse")
+                else:
+                    def_tot_kg = float(carga_item_2['Kilos_Totales'] or 150.0)
+                    def_ok_kg = float(carga_item_2['Kilos_OK'] or def_tot_kg)
+                    with col_cq1:
+                        tot_prod = st.number_input("Kilos Totales Obtenidos (Kg):", min_value=1.0, value=def_tot_kg, step=5.0)
+                    with col_cq2:
+                        ok_prod = st.number_input("Kilos que Salieron BIEN (Kg OK):", min_value=0.0, max_value=tot_prod, value=min(def_ok_kg, tot_prod), step=5.0)
+                    with col_cq3:
+                        nok_prod = round(tot_prod - ok_prod, 1)
+                        st.metric("Kilos de Merma (Kg NOK):", f"{nok_prod} Kg", delta=f"{round(nok_prod/tot_prod*100, 1)}% rechazo" if tot_prod>0 else "0%", delta_color="inverse")
 
-                col_u1, col_u2, col_u3 = st.columns(3)
-                with col_u1:
-                    u_totales = st.number_input("Total Unidades Realizadas:", min_value=1, value=val_tot, step=5)
-                with col_u2:
-                    u_conformes = st.number_input("Unidades que salieron BIEN (OK):", min_value=0, max_value=u_totales, value=min(val_ok, u_totales), step=5)
-                with col_u3:
-                    u_rechazadas = u_totales - u_conformes
-                    st.metric("Unidades que salieron MAL (Merma):", f"{u_rechazadas} un.", delta=f"{round(u_rechazadas/u_totales*100, 1)}% rechazo" if u_totales>0 else "0%", delta_color="inverse")
+                # Desplegable amigable de Motivos de Rechazo
+                current_motivo = str(carga_item_2['Motivo_Rechazo'] or "")
+                idx_mot = 0
+                if current_motivo in MOTIVOS_RECHAZO_LIST:
+                    idx_mot = MOTIVOS_RECHAZO_LIST.index(current_motivo)
 
-                motivos_comunes = ["Ninguno (100% Conforme)", "Cocción Quemada / Exceso Calor", "Cocción Cruda / Baja T°", "Pérdida Térmica / Puerta Abierta", "Deformación / Presentación", "Contaminación / Caída", "Otro"]
-                idx_m = 0
-                if val_motivo in motivos_comunes:
-                    idx_m = motivos_comunes.index(val_motivo)
-
-                motivo_sel = st.selectbox("Motivo de Desvío / Rechazo:", motivos_comunes, index=idx_m)
+                motivo_elegido = st.selectbox("📋 Motivo del Desvío o Rechazo:", MOTIVOS_RECHAZO_LIST, index=idx_mot)
                 
-                motivo_obs = ""
-                if motivo_sel == "Otro":
-                    motivo_obs = st.text_input("Especificar motivo:", value=val_motivo if val_motivo not in motivos_comunes else "")
+                motivo_extra = ""
+                if motivo_elegido == "Otro":
+                    motivo_extra = st.text_input("Especificar otro motivo:", value=current_motivo if current_motivo not in MOTIVOS_RECHAZO_LIST else "")
 
-                btn_save_cal = st.form_submit_button("💾 Guardar Control de Calidad", use_container_width=True)
-                if btn_save_cal:
-                    motivo_final = motivo_obs if motivo_sel == "Otro" else (motivo_sel if motivo_sel != "Ninguno (100% Conforme)" else "")
-                    save_operario_calidad(sel_charge_id_2, u_totales, u_conformes, u_rechazadas, motivo=motivo_final, db_path=default_db_file)
-                    st.success(f"✅ ¡Control de Calidad guardado! {u_conformes} unidades OK de {u_totales} totales.")
+                btn_save_qc = st.form_submit_button("💾 Guardar Control de Calidad", use_container_width=True)
+                if btn_save_qc:
+                    motivo_final = motivo_extra if motivo_elegido == "Otro" else (motivo_elegido if motivo_elegido != "100% Conforme (Sin Desvío)" else "")
+                    save_operario_calidad_completa(sel_c_id_2, tot_prod, ok_prod, nok_prod, motivo=motivo_final, unidad="Kg" if es_marmita else "Unidades", db_path=default_db_file)
+                    st.success(f"✅ ¡Calidad registrada! {ok_prod} {'Kg' if es_marmita else 'unidades'} conformes.")
                     st.rerun()
 
 # =========================================================
@@ -508,8 +536,8 @@ else:
 
     st.markdown(f"""
     <div class="status-bar">
-        <div>🏭 <b>Flota Activa:</b> {total_ovens} Horno(s) Rational &nbsp;|&nbsp; 📋 <b>Cargas:</b> {len(filtered_df)} &nbsp;|&nbsp; 🍞 <b>Placas:</b> {total_placas_utilizadas:.0f} / {total_capacidad_teorica_placas:.0f}</div>
-        <div>📅 <b>Rango:</b> {date_span_str if len(date_range)==2 else "Histórico Completo"}</div>
+        <div>🏭 <b>Flota:</b> {total_ovens} Horno(s) Rational &nbsp;|&nbsp; 📋 <b>Cargas:</b> {len(filtered_df)} &nbsp;|&nbsp; 🍞 <b>Placas:</b> {total_placas_utilizadas:.0f} / {total_capacidad_teorica_placas:.0f}</div>
+        <div>📅 <b>Rango:</b> {date_span_str}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -572,7 +600,7 @@ else:
     # Pestañas Supervisor
     tab_sup_main, tab_sup_operario, tab_sup_grid, tab_sup_fleet, tab_sup_haccp, tab_sup_data = st.tabs([
         "📊 Tablero Central OEE & Cascada",
-        "👨‍🍳 Terminal de Operario (Vista Directa)",
+        "👨‍🍳 Terminal de Cocinero (Vista Directa)",
         "📋 Auditoría de Lotes y Placas",
         "🎛️ Benchmarking de Flota",
         "🔍 Control de Calidad y HACCP",
@@ -647,8 +675,8 @@ else:
                 st.plotly_chart(fig_trend, use_container_width=True)
 
     with tab_sup_operario:
-        st.markdown("### 👨‍🍳 Terminal Interactiva de Operario (Vista Supervisor)")
-        st.info("Esta es la misma interfaz simplificada que ve el usuario operario (`fvannella@foodservice.com.ar`).")
+        st.markdown("### 👨‍🍳 Terminal de Cocinero (Vista Supervisor)")
+        st.info("Esta es la misma interfaz simplificada que ve el usuario cocinero (`fvannella@foodservice.com.ar`).")
 
         if not df_cooking.empty:
             cargas_list_sup = df_cooking.sort_values(by='id', ascending=False).to_dict('records')
@@ -665,7 +693,7 @@ else:
                 st.markdown(f"#### 📥 1. Placas en Horno (Capacidad: {cap_m})")
                 p_carg = st.slider("Placas introducidas:", 1, cap_m, min(int(c_row['Placas_Utilizadas'] or cap_m), cap_m), key="sup_p_slider")
                 if st.button("💾 Guardar Placas", key="btn_sup_p"):
-                    save_operario_placas(sel_c_sup, p_carg, db_path=default_db_file)
+                    save_operario_carga(sel_c_sup, "Horno Rational", p_carg, unidad="Placas", db_path=default_db_file)
                     st.success("Placas guardadas.")
                     st.rerun()
 
@@ -675,9 +703,13 @@ else:
                 u_ok_s = st.number_input("Unidades BIEN (OK):", min_value=0, max_value=u_tot_s, value=min(int(c_row['Unidades_OK'] or u_tot_s), u_tot_s), step=5, key="sup_u_ok")
                 u_nok_s = u_tot_s - u_ok_s
                 st.write(f"**Unidades Rechazadas / Merma:** `{u_nok_s}`")
-                mot_s = st.text_input("Motivo de rechazo:", value=str(c_row['Motivo_Rechazo'] or ""), key="sup_mot")
+                
+                mot_cur = str(c_row['Motivo_Rechazo'] or "")
+                idx_m_sup = MOTIVOS_RECHAZO_LIST.index(mot_cur) if mot_cur in MOTIVOS_RECHAZO_LIST else 0
+                mot_s = st.selectbox("Motivo del Rechazo:", MOTIVOS_RECHAZO_LIST, index=idx_m_sup, key="sup_mot_sel")
+                
                 if st.button("💾 Guardar Unidades y Calidad", key="btn_sup_q"):
-                    save_operario_calidad(sel_c_sup, u_tot_s, u_ok_s, u_nok_s, motivo=mot_s, db_path=default_db_file)
+                    save_operario_calidad_completa(sel_c_sup, u_tot_s, u_ok_s, u_nok_s, motivo=mot_s if mot_s!="100% Conforme (Sin Desvío)" else "", unidad="Unidades", db_path=default_db_file)
                     st.success("Calidad guardada.")
                     st.rerun()
 
